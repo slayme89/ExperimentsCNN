@@ -24,7 +24,7 @@ much_data = [] # use this for preprocessing
 patients = os.listdir(data_dir)
 
 
-IMG_SIZE_PX = 50  #original 512
+IMG_SIZE_PX = 512  #original 512
 SLICE_COUNT = 30
 n_classes = 2
 batch_size = 1
@@ -230,63 +230,78 @@ print('ok')
 
 ############################## Preprocessing stuff End ################################
 
+######## fit batch generator ##########
+def fit_generator(path):
+    while 1:
+        with open(path) as f:
+            for line in f:
+                # create numpy arrays of input data
+                # and labels, from each line in the file
+                x1, x2, y = process_line(line)
+                yield ({'input_1': x1, 'input_2': x2}, {'output': y})
 
 
 
 ############################## CNN stuff  ################################
+# load data
 much_data = np.load(output_dir + 'testdata-{}-{}-{}.npy'.format(IMG_SIZE_PX,IMG_SIZE_PX,SLICE_COUNT))  # load data for the cnn here
-#print(much_data.shape)
-#print(much_data.shape[0])
 much_data = much_data.reshape(batch_size, IMG_SIZE_PX, IMG_SIZE_PX, SLICE_COUNT, 1)
-#print(much_data.shape)
-
-
-
-
-# Convolution Kernel Size
-kernel_size = [5,5,5]
-
-
-#print(much_data.shape)
-
-
 
 input_shape = (IMG_SIZE_PX, IMG_SIZE_PX, SLICE_COUNT, 1)
 
+# Create training data
 X_train = much_data
 Y_train = np.load(output_dir + 'labels.npy')
-
-
-
-#print(Y_train)
 Y_train = keras.utils.to_categorical(Y_train, 2)
 
+Xtrain_data = much_data[:-100]
+Xvalidation_data = much_data[-100:]
+Ytrain_data = Y_train[:-100]
+Yvalidation_data = Y_train[-100:]
+
+# Make training data generator friendly
+"""
+TODO
+
+save the x + y training data into a file
+
+formatted_training_data = np.save.... something
+
+"""
+
+
+########### Network
 model = keras.models.Sequential()
+# Block 01
+model.add(Dense(input_shape=input_shape))
+model.add(AveragePooling3D(pool_size=(2, 1, 1), strides=(2, 1, 1), padding='same'))
+model.add(Conv3D(64, kernel_size=(3,3,3), activation='relu', padding='same', name='Conv1'))
+model.add(MaxPooling3D(pool_size=(1,2,2), strides=(1,2,2), padding='valid', name='Pool1'))
+# Block 02
+model.add(Conv3D(128, kernel_size=(3,3,3), activation='relu', padding='same', name='Conv2'))
+model.add(MaxPooling3D(pool_size=(2,2,2), strides=(2,2,2), padding='valid', name='Pool2'))
+model.add(Dropout(rate=0.3))
+# Block 03
+model.add(Conv3D(256, kernel_size=(3,3,3), activation='relu', padding='same', name='Conv3A'))
+model.add(Conv3D(256, kernel_size=(3,3,3), activation='relu', padding='same', name='Conv3B'))
+model.add(MaxPooling3D(pool_size=(2,2,2), strides=(2,2,2), padding='valid', name='Pool3'))
+model.add(Dropout(rate=0.4))
+# Block 04
+model.add(Conv3D(512, kernel_size=(3,3,3), activation='relu', padding='same', name='Conv4A'))
+model.add(Conv3D(512, kernel_size=(3,3,3), activation='relu', padding='same', name='Conv4B'))
+model.add(MaxPooling3D(pool_size=(2,2,2), strides=(2,2,2), padding='valid', name='Pool4'))
+model.add(Dropout(rate=0.5))
+# Block 05
+model.add(Conv3D(64, kernel_size=(2,2,2), activation='relu', padding='same', name='last_64'))
 
-model.add(Conv3D(32, (kernel_size[0], kernel_size[1], kernel_size[2]), input_shape=input_shape, activation='relu'))
-
-# Fully Connected layer
-model.add(Flatten())
-model.add(Dense(128, activation='relu'))
-model.add(Dropout(0.5))
-# Softmax Layer
-model.add(Dense(2))
-model.add(Activation('softmax'))
 # Compile
 opt = keras.optimizers.rmsprop(lr=0.0001, decay=1e-6)
-
 model.compile(loss='categorical_crossentropy', optimizer=opt, metrics=['accuracy'])
 
 #model.summary()
 
-#out = model.predict(X_train)
 
-Xtrain_data = much_data[:-1]
-Xvalidation_data = much_data[-1:]
-Ytrain_data = Y_train[:-1]
-Yvalidation_data = Y_train[-1:]
-
-hist = model.fit(x=Xtrain_data, y=Ytrain_data, epochs=1, verbose=0, validation_data=(Xvalidation_data, Yvalidation_data))
+hist = model.fit_gerator(fit_generator(formatted_training_data), epochs=20, verbose=0, validation_data=(Xvalidation_data, Yvalidation_data))
 
 model.save(output_dir + 'testmodel.h5')
 

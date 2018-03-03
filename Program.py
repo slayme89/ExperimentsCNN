@@ -15,8 +15,9 @@ from keras.models import Sequential
 from keras.layers import Dense, Dropout, Activation, Flatten
 from keras.layers import Conv3D, MaxPooling3D, GlobalAveragePooling3D
 
-####################### preprocess stuff ###########
-### Constants ####
+#################
+### Constants ###
+#################
 data_dir = 'D:/Data/stage1_patients/'# The folder with all patient folders
 labels = pd.read_csv('D:/Data/stage1_labels/stage1_labels.csv', index_col=0) # The labels .csv file
 output_dir = 'D:/Data/pre/' # output folder for saving processed data
@@ -28,17 +29,23 @@ IMG_SIZE_PX = 512  #original 512
 SLICE_COUNT = 30
 n_classes = 2
 batch_size = 1
-######################
+
+################################
+### Pre processing functions ###
+################################
+""" Chunks """
 def chunks(l, n):
     # Credit: Ned Batchelder
     # Link: http://stackoverflow.com/questions/312443/how-do-you-split-a-list-into-evenly-sized-chunks
     # Yield successive n-sized chunks from l.
     for i in range(0, len(l), n):
         yield l[i:i + n]
+
+""" Gets the mean value from 'a' """
 def mean(a):
     return sum(a) / len(a)
 
-##################################################################################################
+""" Extracts a image from a DICOM-files in form of a pixel array """
 def get_pixels_hu(slices):
     image = np.stack([s.pixel_array for s in slices])
     # Convert to int16 (from sometimes int16),
@@ -63,7 +70,7 @@ def get_pixels_hu(slices):
 
     return np.array(image, dtype=np.int16)
 
-
+"""  """
 def largest_label_volume(im, bg=-1):
     vals, counts = np.unique(im, return_counts=True)
 
@@ -75,7 +82,7 @@ def largest_label_volume(im, bg=-1):
     else:
         return None
 
-
+""" Crops out the lungs from a image """
 def segment_lung_mask(image, fill_lung_structures=True):
     # not actually binary, but 1 and 2.
     # 0 is treated as background, which we do not want
@@ -114,7 +121,7 @@ def segment_lung_mask(image, fill_lung_structures=True):
 
     return binary_image
 
-
+""" Resampling data """
 def resample(image, scan, new_spacing=[1, 1, 1]):
     # Determine current pixel spacing
     spacing = np.array([scan[0].SliceThickness] + scan[0].PixelSpacing, dtype=np.float32)
@@ -125,29 +132,26 @@ def resample(image, scan, new_spacing=[1, 1, 1]):
     real_resize_factor = new_shape / image.shape
     new_spacing = spacing / real_resize_factor
 
-    #image = scipy.ndimage.interpolation.zoom(image, real_resize_factor, mode='nearest')
+    image = scipy.ndimage.interpolation.zoom(image, real_resize_factor, mode='nearest')
 
     return image, new_spacing
 
-
-MIN_BOUND = -1000.0
-MAX_BOUND = 400.0
-
-
+""" Normalization of a image """
 def normalize(image):
+    MIN_BOUND = -1000.0
+    MAX_BOUND = 400.0
     image = (image - MIN_BOUND) / (MAX_BOUND - MIN_BOUND)
     image[image > 1] = 1.
     image[image < 0] = 0.
     return image
 
-
-PIXEL_MEAN = 0.25
-
+""" Zero centering a image """
 def zero_center(image):
+    PIXEL_MEAN = 0.25
     image = image - PIXEL_MEAN
     return image
 
-
+""" Loads a DT-scan from 1 patient (DICOM-file) """
 def load_scan(path):
     slices = [dicom.read_file(path + '/' + s) for s in os.listdir(path)]
     slices.sort(key=lambda x: float(x.ImagePositionPatient[2]))
@@ -161,8 +165,23 @@ def load_scan(path):
 
     return slices
 
+""" batch generator for .fit_generator that yield random data from 'features' and 'labels' of size 'batch_size' """
+def batch_generator(features, labels, batch_size):
+    # Create empty arrays to contain batch of features and labels#
+    batch_features = np.zeros((batch_size, 64, 64, 3))
+    batch_labels = np.zeros((batch_size,1))
+    while True:
+        for i in range(batch_size):
+            # choose random index in features
+            index= random.choice(len(features),1)
+            batch_features[i] = some_processing(features[index])
+            batch_labels[i] = labels[index]
+            yield batch_features, batch_labels
 
-############################## Preprocessing stuff ################################
+###############################
+### Preprocessing the data ####
+###############################
+
 test_data = np.empty((batch_size, IMG_SIZE_PX, IMG_SIZE_PX, SLICE_COUNT, 1))
 label_data = []
 
@@ -173,29 +192,18 @@ for num,patient in enumerate(patients):
 #    if num % 100 == 0:
 #        print(num)
     try:
-#        print('1')
         first_patient = load_scan(data_dir + patient)
-#        print('2')
         first_patient_pixels = get_pixels_hu(first_patient)
-#        print('3')
         pix_resampled, spacing = resample(first_patient_pixels, first_patient, [1, 1, 1])
         pix_resampled = segment_lung_mask(pix_resampled, False)
         pix_resampled = normalize(pix_resampled)
         pix_resampled = zero_center(pix_resampled)
 
-#        print('4')
-
         label = labels.get_value(patient, 'cancer')
-        #if label == 1:
-        #    label = np.array([0, 1])
-        #elif label == 0:
-        #    label = np.array([1, 0])
-
         slices = [cv2.resize(np.array(each_slice), (IMG_SIZE_PX, IMG_SIZE_PX)) for each_slice in pix_resampled]
-
         new_slices = []
-
         chunk_sizes = math.ceil(len(slices) / SLICE_COUNT)
+        
         for slice_chunk in chunks(slices, chunk_sizes):
             slice_chunk = list(map(mean, zip(*slice_chunk)))
             new_slices.append(slice_chunk)
@@ -208,7 +216,6 @@ for num,patient in enumerate(patients):
             new_val = list(map(mean, zip(*[new_slices[SLICE_COUNT - 1], new_slices[SLICE_COUNT], ])))
             del new_slices[SLICE_COUNT]
             new_slices[SLICE_COUNT - 1] = new_val
-
         if len(new_slices) == SLICE_COUNT + 1:
             new_val = list(map(mean, zip(*[new_slices[SLICE_COUNT - 1], new_slices[SLICE_COUNT], ])))
             del new_slices[SLICE_COUNT]
@@ -223,30 +230,15 @@ for num,patient in enumerate(patients):
     except KeyError as e:
         print('This is unlabeled data!')
 
-
 np.save(output_dir + 'testdata-{}-{}-{}'.format(IMG_SIZE_PX,IMG_SIZE_PX,SLICE_COUNT), test_data)
 np.save(output_dir + 'labels', label_data)
 print('ok')
 
-############################## Preprocessing stuff End ################################
+##################################
+### Convolutional Neural Network ###
+##################################
 
-######## fit batch generator ##########
-def batch_generator(features, labels, batch_size):
-    # Create empty arrays to contain batch of features and labels#
-    batch_features = np.zeros((batch_size, 64, 64, 3))
-    batch_labels = np.zeros((batch_size,1))
-    while True:
-        for i in range(batch_size):
-            # choose random index in features
-            index= random.choice(len(features),1)
-            batch_features[i] = some_processing(features[index])
-            batch_labels[i] = labels[index]
-            yield batch_features, batch_labels
-
-
-
-############################## CNN stuff  ################################
-# load data
+# load the data
 much_data = np.load(output_dir + 'testdata-{}-{}-{}.npy'.format(IMG_SIZE_PX,IMG_SIZE_PX,SLICE_COUNT))  # load data for the cnn here
 much_data = much_data.reshape(batch_size, IMG_SIZE_PX, IMG_SIZE_PX, SLICE_COUNT, 1)
 
@@ -266,7 +258,8 @@ Ytrain_data = Y_train[:-100]
 Xvalidation_data = much_data[-100:]
 Yvalidation_data = Y_train[-100:]
 
-########### Building network #################
+#### Building the network (model) ###
+
 model = keras.models.Sequential()
 # Block 01
 model.add(Dense(input_shape=input_shape))
@@ -300,14 +293,14 @@ model.compile(loss='categorical_crossentropy', optimizer=opt, metrics=['accuracy
 
 #model.summary()
 
-
 hist = model.fit_gerator(batch_generator(X_train, Y_train, 100), epochs=20, verbose=0, validation_data=(Xvalidation_data, Yvalidation_data))
 
+# Save the model
 model.save(output_dir + 'testmodel.h5')
 
-model = load_model(output_dir + 'testmodel.h5')
+# Load the model
+#model = load_model(output_dir + 'testmodel.h5')
 
 scores = model.evaluate(X_train, Y_train, verbose=1)
 print('Test loss:', scores[0])
 print('Test accuracy:', scores[1])
-############################## Training End ################################

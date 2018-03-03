@@ -231,14 +231,17 @@ print('ok')
 ############################## Preprocessing stuff End ################################
 
 ######## fit batch generator ##########
-def fit_generator(path):
-    while 1:
-        with open(path) as f:
-            for line in f:
-                # create numpy arrays of input data
-                # and labels, from each line in the file
-                x1, x2, y = process_line(line)
-                yield ({'input_1': x1, 'input_2': x2}, {'output': y})
+def batch_generator(features, labels, batch_size):
+    # Create empty arrays to contain batch of features and labels#
+    batch_features = np.zeros((batch_size, 64, 64, 3))
+    batch_labels = np.zeros((batch_size,1))
+    while True:
+        for i in range(batch_size):
+            # choose random index in features
+            index= random.choice(len(features),1)
+            batch_features[i] = some_processing(features[index])
+            batch_labels[i] = labels[index]
+            yield batch_features, batch_labels
 
 
 
@@ -254,23 +257,16 @@ X_train = much_data
 Y_train = np.load(output_dir + 'labels.npy')
 Y_train = keras.utils.to_categorical(Y_train, 2)
 
+"""
+OLD TRAINING DATA STUFF
+
 Xtrain_data = much_data[:-100]
-Xvalidation_data = much_data[-100:]
 Ytrain_data = Y_train[:-100]
+"""
+Xvalidation_data = much_data[-100:]
 Yvalidation_data = Y_train[-100:]
 
-# Make training data generator friendly
-"""
-TODO
-
-save the x + y training data into a file
-
-formatted_training_data = np.save.... something
-
-"""
-
-
-########### Network
+########### Building network #################
 model = keras.models.Sequential()
 # Block 01
 model.add(Dense(input_shape=input_shape))
@@ -291,17 +287,21 @@ model.add(Conv3D(512, kernel_size=(3,3,3), activation='relu', padding='same', na
 model.add(Conv3D(512, kernel_size=(3,3,3), activation='relu', padding='same', name='Conv4B'))
 model.add(MaxPooling3D(pool_size=(2,2,2), strides=(2,2,2), padding='valid', name='Pool4'))
 model.add(Dropout(rate=0.5))
-# Block 05
+# Block 05 (??)
 model.add(Conv3D(64, kernel_size=(2,2,2), activation='relu', padding='same', name='last_64'))
+model.add(Conv3D(1, kernel_size=(1,1,1), activation='sigmoid', name='out_last'))
+model.add(Flatten(name='out_class'))
+model.add(Conv3D(1, kernel_size=(1,1,1), activation=None, name='out_malignancy_last'))
+model.add(Flatten(name='out_malignancy'))
 
-# Compile
+# Compile 
 opt = keras.optimizers.rmsprop(lr=0.0001, decay=1e-6)
 model.compile(loss='categorical_crossentropy', optimizer=opt, metrics=['accuracy'])
 
 #model.summary()
 
 
-hist = model.fit_gerator(fit_generator(formatted_training_data), epochs=20, verbose=0, validation_data=(Xvalidation_data, Yvalidation_data))
+hist = model.fit_gerator(batch_generator(X_train, Y_train, 100), epochs=20, verbose=0, validation_data=(Xvalidation_data, Yvalidation_data))
 
 model.save(output_dir + 'testmodel.h5')
 

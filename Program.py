@@ -263,37 +263,95 @@ Yvalidation_data = Y_train[-100:]
 
 ### Building the network (model) ###
 
+"""
+def create_network(input_shape=(IMG_SIZE_PX, IMG_SIZE_PX, SLICE_COUNT, 1), load_weight_path=None, features=False) -> Model:
+    inputs = Input(shape=input_shape, name="input_1")
+    x = inputs
+    x = AveragePooling3D(pool_size=(2, 1, 1), strides=(2, 1, 1), border_mode="same")(x)
+    x = Convolution3D(64, 3, 3, 3, activation='relu', border_mode='same', name='conv1', subsample=(1, 1, 1))(x)
+    x = MaxPooling3D(pool_size=(1, 2, 2), strides=(1, 2, 2), border_mode='valid', name='pool1')(x)
+
+    # 2nd layer group
+    x = Convolution3D(128, 3, 3, 3, activation='relu', border_mode='same', name='conv2', subsample=(1, 1, 1))(x)
+    x = MaxPooling3D(pool_size=(2, 2, 2), strides=(2, 2, 2), border_mode='valid', name='pool2')(x)
+    x = Dropout(p=0.3)(x)
+
+    # 3rd layer group
+    x = Convolution3D(256, 3, 3, 3, activation='relu', border_mode='same', name='conv3a', subsample=(1, 1, 1))(x)
+    x = Convolution3D(256, 3, 3, 3, activation='relu', border_mode='same', name='conv3b', subsample=(1, 1, 1))(x)
+    x = MaxPooling3D(pool_size=(2, 2, 2), strides=(2, 2, 2), border_mode='valid', name='pool3')(x)
+    x = Dropout(p=0.4)(x)
+
+    # 4th layer group
+    x = Convolution3D(512, 3, 3, 3, activation='relu', border_mode='same', name='conv4a', subsample=(1, 1, 1))(x)
+    x = Convolution3D(512, 3, 3, 3, activation='relu', border_mode='same', name='conv4b', subsample=(1, 1, 1),)(x)
+    x = MaxPooling3D(pool_size=(2, 2, 2), strides=(2, 2, 2), border_mode='valid', name='pool4')(x)
+    x = Dropout(p=0.5)(x)
+
+    last64 = Convolution3D(64, 2, 2, 2, activation="relu", name='last_64')(x)
+    out_class = Convolution3D(1, 1, 1, 1, activation="sigmoid", name="out_class_last")(last64)
+    out_class = Flatten(name="out_class")(out_class)
+
+    out_malignancy = Convolution3D(1, 1, 1, 1, activation=None, name="out_malignancy_last")(last64)
+    out_malignancy = Flatten(name="out_malignancy")(out_malignancy)
+
+    model = Model(input=inputs, output=[out_class, out_malignancy])
+    if load_weight_path is not None:
+        model.load_weights(load_weight_path, by_name=False)
+    model.compile(optimizer=SGD(lr=LEARN_RATE, momentum=0.9, nesterov=True), loss={"out_class": "binary_crossentropy", "out_malignancy": mean_absolute_error}, metrics={"out_class": [binary_accuracy, binary_crossentropy], "out_malignancy": mean_absolute_error})
+
+    if features:
+        model = Model(input=inputs, output=[last64])
+    model.summary(line_length=140)
+
+    return model
+
+model = create_network()
+
+"""
+print('hej1')
 model = keras.models.Sequential()
 # Block 01
-model.add(AveragePooling3D(input_shape=input_shape, pool_size=(2, 1, 1), strides=(2, 1, 1), padding='same', name='AvgPool1'))
+model.add(AveragePooling3D(input_shape=(IMG_SIZE_PX, IMG_SIZE_PX, SLICE_COUNT, 1),pool_size=(2, 1, 1), strides=(2, 1, 1), padding='same', name='AvgPool1'))
 model.add(Conv3D(64, kernel_size=(3,3,3), activation='relu', padding='same', name='Conv1'))
 model.add(MaxPooling3D(pool_size=(1,2,2), strides=(1,2,2), padding='valid', name='MaxPool1'))
+print('hej2')
 # Block 02
 model.add(Conv3D(128, kernel_size=(3,3,3), activation='relu', padding='same', name='Conv2'))
 model.add(MaxPooling3D(pool_size=(2,2,2), strides=(2,2,2), padding='valid', name='MaxPool2'))
 model.add(Dropout(rate=0.3))
 # Block 03
+print('hej3')
 model.add(Conv3D(256, kernel_size=(3,3,3), activation='relu', padding='same', name='Conv3A'))
 model.add(Conv3D(256, kernel_size=(3,3,3), activation='relu', padding='same', name='Conv3B'))
 model.add(MaxPooling3D(pool_size=(2,2,2), strides=(2,2,2), padding='valid', name='MaxPool3'))
 model.add(Dropout(rate=0.4))
 # Block 04
+print('hej4')
 model.add(Conv3D(512, kernel_size=(3,3,3), activation='relu', padding='same', name='Conv4A'))
 model.add(Conv3D(512, kernel_size=(3,3,3), activation='relu', padding='same', name='Conv4B'))
 model.add(MaxPooling3D(pool_size=(2,2,2), strides=(2,2,2), padding='valid', name='MaxPool4'))
 model.add(Dropout(rate=0.5))
 # Block 05 (?? TODO ??)
+print('hej5')
 model.add(Conv3D(64, kernel_size=(2,2,2), activation='relu', padding='same', name='last_64'))
+print('apa1')
 model.add(Conv3D(1, kernel_size=(1,1,1), activation='sigmoid', name='out_last'))
+print('apa2')
 model.add(Flatten(name='out_class'))
-model.add(Conv3D(1, kernel_size=(1,1,1), name='out_malignancy_last'))
+print('apa3')
+model.add(Conv3D(1, kernel_size=(1,1,1), activation=None, name='out_malignancy_last'))
+print('apa4')
 model.add(Flatten(name='out_malignancy'))
 print('Done Building\n')
+
 
 # Compile 
 opt = keras.optimizers.rmsprop(lr=0.0001, decay=1e-6)
 model.compile(loss='categorical_crossentropy', optimizer=opt, metrics=['accuracy'])
 print('Done Compiling\n')
+
+
 
 # Fit network
 model.fit_generator(batch_generator(X_train, Y_train, 1),steps_per_epoch=1, epochs=1, verbose=0, validation_data=(Xvalidation_data, Yvalidation_data))

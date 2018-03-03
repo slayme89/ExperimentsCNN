@@ -18,17 +18,20 @@ from keras.layers import Conv3D, MaxPooling3D, GlobalAveragePooling3D
 #################
 ### Constants ###
 #################
-data_dir = 'D:/Data/stage1_patients/'# The folder with all patient folders
-labels = pd.read_csv('D:/Data/stage1_labels/stage1_labels.csv', index_col=0) # The labels .csv file
-output_dir = 'D:/Data/pre/' # output folder for saving processed data
-much_data = [] # use this for preprocessing
-patients = os.listdir(data_dir)
 
+# The folder with all patient folders
+DATA_DIR = 'D:/Data/stage1_patients/'
+# The labels .csv file destination
+labels = pd.read_csv('D:/Data/stage1_labels/stage1_labels.csv', index_col=0)
+# output folder for saving processed data and network model
+OUTPUT_DIR = 'D:/Data/pre/'
 
-IMG_SIZE_PX = 512  #original 512
-SLICE_COUNT = 30
-n_classes = 2
-batch_size = 1
+much_data = []
+patients = os.listdir(DATA_DIR)
+
+IMG_SIZE_PX = 512   #original 512
+SLICE_COUNT = 30    #number of slices per patient
+BATCH_SIZE = 100    #number of patients
 
 ################################
 ### Pre processing functions ###
@@ -182,17 +185,17 @@ def batch_generator(features, labels, batch_size):
 ### Preprocessing the data ####
 ###############################
 
-test_data = np.empty((batch_size, IMG_SIZE_PX, IMG_SIZE_PX, SLICE_COUNT, 1))
+test_data = np.empty((BATCH_SIZE, IMG_SIZE_PX, IMG_SIZE_PX, SLICE_COUNT, 1))
 label_data = []
 
 i = 0
 for num,patient in enumerate(patients):
-    if i == batch_size:
+    if i == BATCH_SIZE:
         break
 #    if num % 100 == 0:
 #        print(num)
     try:
-        first_patient = load_scan(data_dir + patient)
+        first_patient = load_scan(DATA_DIR + patient)
         first_patient_pixels = get_pixels_hu(first_patient)
         pix_resampled, spacing = resample(first_patient_pixels, first_patient, [1, 1, 1])
         pix_resampled = segment_lung_mask(pix_resampled, False)
@@ -230,8 +233,8 @@ for num,patient in enumerate(patients):
     except KeyError as e:
         print('This is unlabeled data!')
 
-np.save(output_dir + 'testdata-{}-{}-{}'.format(IMG_SIZE_PX,IMG_SIZE_PX,SLICE_COUNT), test_data)
-np.save(output_dir + 'labels', label_data)
+np.save(OUTPUT_DIR + 'testdata-{}-{}-{}'.format(IMG_SIZE_PX,IMG_SIZE_PX,SLICE_COUNT), test_data)
+np.save(OUTPUT_DIR + 'labels', label_data)
 print('ok')
 
 ##################################
@@ -239,14 +242,14 @@ print('ok')
 ##################################
 
 # load the data
-much_data = np.load(output_dir + 'testdata-{}-{}-{}.npy'.format(IMG_SIZE_PX,IMG_SIZE_PX,SLICE_COUNT))  # load data for the cnn here
-much_data = much_data.reshape(batch_size, IMG_SIZE_PX, IMG_SIZE_PX, SLICE_COUNT, 1)
+much_data = np.load(OUTPUT_DIR + 'testdata-{}-{}-{}.npy'.format(IMG_SIZE_PX,IMG_SIZE_PX,SLICE_COUNT))  # load data for the cnn here
+much_data = much_data.reshape(BATCH_SIZE, IMG_SIZE_PX, IMG_SIZE_PX, SLICE_COUNT, 1)
 
 input_shape = (IMG_SIZE_PX, IMG_SIZE_PX, SLICE_COUNT, 1)
 
 # Create training data
 X_train = much_data
-Y_train = np.load(output_dir + 'labels.npy')
+Y_train = np.load(OUTPUT_DIR + 'labels.npy')
 Y_train = keras.utils.to_categorical(Y_train, 2)
 
 """
@@ -296,10 +299,10 @@ model.compile(loss='categorical_crossentropy', optimizer=opt, metrics=['accuracy
 hist = model.fit_gerator(batch_generator(X_train, Y_train, 100), epochs=20, verbose=0, validation_data=(Xvalidation_data, Yvalidation_data))
 
 # Save the model
-model.save(output_dir + 'testmodel.h5')
+model.save(OUTPUT_DIR + 'testmodel.h5')
 
 # Load the model
-#model = load_model(output_dir + 'testmodel.h5')
+#model = load_model(OUTPUT_DIR + 'testmodel.h5')
 
 scores = model.evaluate(X_train, Y_train, verbose=1)
 print('Test loss:', scores[0])

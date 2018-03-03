@@ -6,14 +6,13 @@ import matplotlib.pyplot as plt
 import cv2
 import math
 import tensorflow as tf
-from skimage import measure, morphology
+import scipy.ndimage.interpolation
 import keras
+from skimage import measure, morphology
 from keras.utils import np_utils
 from keras.optimizers import SGD
-from keras.models import load_model
-from keras.models import Sequential
-from keras.layers import Dense, Dropout, Activation, Flatten
-from keras.layers import Conv3D, MaxPooling3D, GlobalAveragePooling3D
+from keras.models import load_model, Sequential, Model
+from keras.layers import Input, Convolution2D, MaxPooling2D, UpSampling2D, merge, Convolution3D, Conv3D, MaxPooling3D, UpSampling3D, LeakyReLU, BatchNormalization, Flatten, Dense, Dropout, ZeroPadding3D, AveragePooling3D, Activation
 
 #################
 ### Constants ###
@@ -31,7 +30,7 @@ patients = os.listdir(DATA_DIR)
 
 IMG_SIZE_PX = 512   #original 512
 SLICE_COUNT = 30    #number of slices per patient
-BATCH_SIZE = 100    #number of patients
+BATCH_SIZE = 1    #number of patients
 
 ################################
 ### Pre processing functions ###
@@ -237,9 +236,9 @@ np.save(OUTPUT_DIR + 'testdata-{}-{}-{}'.format(IMG_SIZE_PX,IMG_SIZE_PX,SLICE_CO
 np.save(OUTPUT_DIR + 'labels', label_data)
 print('ok')
 
-##################################
+####################################
 ### Convolutional Neural Network ###
-##################################
+####################################
 
 # load the data
 much_data = np.load(OUTPUT_DIR + 'testdata-{}-{}-{}.npy'.format(IMG_SIZE_PX,IMG_SIZE_PX,SLICE_COUNT))  # load data for the cnn here
@@ -258,52 +257,56 @@ OLD TRAINING DATA STUFF
 Xtrain_data = much_data[:-100]
 Ytrain_data = Y_train[:-100]
 """
+
 Xvalidation_data = much_data[-100:]
 Yvalidation_data = Y_train[-100:]
 
-#### Building the network (model) ###
+### Building the network (model) ###
 
 model = keras.models.Sequential()
 # Block 01
-model.add(Dense(input_shape=input_shape))
-model.add(AveragePooling3D(pool_size=(2, 1, 1), strides=(2, 1, 1), padding='same'))
+model.add(AveragePooling3D(input_shape=input_shape, pool_size=(2, 1, 1), strides=(2, 1, 1), padding='same', name='AvgPool1'))
 model.add(Conv3D(64, kernel_size=(3,3,3), activation='relu', padding='same', name='Conv1'))
-model.add(MaxPooling3D(pool_size=(1,2,2), strides=(1,2,2), padding='valid', name='Pool1'))
+model.add(MaxPooling3D(pool_size=(1,2,2), strides=(1,2,2), padding='valid', name='MaxPool1'))
 # Block 02
 model.add(Conv3D(128, kernel_size=(3,3,3), activation='relu', padding='same', name='Conv2'))
-model.add(MaxPooling3D(pool_size=(2,2,2), strides=(2,2,2), padding='valid', name='Pool2'))
+model.add(MaxPooling3D(pool_size=(2,2,2), strides=(2,2,2), padding='valid', name='MaxPool2'))
 model.add(Dropout(rate=0.3))
 # Block 03
 model.add(Conv3D(256, kernel_size=(3,3,3), activation='relu', padding='same', name='Conv3A'))
 model.add(Conv3D(256, kernel_size=(3,3,3), activation='relu', padding='same', name='Conv3B'))
-model.add(MaxPooling3D(pool_size=(2,2,2), strides=(2,2,2), padding='valid', name='Pool3'))
+model.add(MaxPooling3D(pool_size=(2,2,2), strides=(2,2,2), padding='valid', name='MaxPool3'))
 model.add(Dropout(rate=0.4))
 # Block 04
 model.add(Conv3D(512, kernel_size=(3,3,3), activation='relu', padding='same', name='Conv4A'))
 model.add(Conv3D(512, kernel_size=(3,3,3), activation='relu', padding='same', name='Conv4B'))
-model.add(MaxPooling3D(pool_size=(2,2,2), strides=(2,2,2), padding='valid', name='Pool4'))
+model.add(MaxPooling3D(pool_size=(2,2,2), strides=(2,2,2), padding='valid', name='MaxPool4'))
 model.add(Dropout(rate=0.5))
-# Block 05 (??)
+# Block 05 (?? TODO ??)
 model.add(Conv3D(64, kernel_size=(2,2,2), activation='relu', padding='same', name='last_64'))
 model.add(Conv3D(1, kernel_size=(1,1,1), activation='sigmoid', name='out_last'))
 model.add(Flatten(name='out_class'))
-model.add(Conv3D(1, kernel_size=(1,1,1), activation=None, name='out_malignancy_last'))
+model.add(Conv3D(1, kernel_size=(1,1,1), name='out_malignancy_last'))
 model.add(Flatten(name='out_malignancy'))
+print('Done Building\n')
 
 # Compile 
 opt = keras.optimizers.rmsprop(lr=0.0001, decay=1e-6)
 model.compile(loss='categorical_crossentropy', optimizer=opt, metrics=['accuracy'])
+print('Done Compiling\n')
 
-#model.summary()
-
-hist = model.fit_gerator(batch_generator(X_train, Y_train, 100), epochs=20, verbose=0, validation_data=(Xvalidation_data, Yvalidation_data))
+# Fit network
+model.fit_generator(batch_generator(X_train, Y_train, 1),steps_per_epoch=1, epochs=1, verbose=0, validation_data=(Xvalidation_data, Yvalidation_data))
+print('done fitting\n')
 
 # Save the model
-model.save(OUTPUT_DIR + 'testmodel.h5')
+model.save(OUTPUT_DIR + 'CNN_model.h5')
+print('model saved to dir: ' + OUTPUT_DIR)
 
 # Load the model
 #model = load_model(OUTPUT_DIR + 'testmodel.h5')
 
+# Evaluate
 scores = model.evaluate(X_train, Y_train, verbose=1)
 print('Test loss:', scores[0])
 print('Test accuracy:', scores[1])

@@ -22,16 +22,17 @@ from keras.layers import Input, Convolution2D, MaxPooling2D, UpSampling2D, merge
 # The folder with all patient folders
 DATA_DIR = 'D:/Data/stage1_patients/'
 # The labels .csv file destination
-labels = pd.read_csv('D:/Data/stage1_labels/stage1_labels.csv', index_col=0)
+labs = pd.read_csv('D:/Data/stage1_labels/stage1_labels.csv', index_col=0)
 # output folder for saving processed data and network model
 OUTPUT_DIR = 'D:/Data/pre/'
 
 much_data = []
-patients = os.listdir(DATA_DIR)
 
-IMG_SIZE_PX = 50   #original 512
-SLICE_COUNT = 30    #number of slices per patient
-BATCH_SIZE = 1    #number of patients
+pats = os.listdir(DATA_DIR)
+
+IMG_SIZE_PX = 32  #original 512
+SLICE_COUNT = 32  #number of slices per patient
+BATCH_SIZE = 1    #number of patients 
 
 ################################
 ### Pre processing functions ###
@@ -181,115 +182,188 @@ def batch_generator(features, labels, batch_size):
             batch_labels[i] = labels[index]
             yield (batch_features, batch_labels)
 
-##############################
-### Preprocessing the data ###
-##############################
 
-test_data = np.empty((BATCH_SIZE, IMG_SIZE_PX, IMG_SIZE_PX, SLICE_COUNT, 1))
-label_data = []
+def create_network(input_shape):
+    model = keras.models.Sequential()
+    # Block 01
+    model.add(AveragePooling3D(input_shape=input_shape,pool_size=(2, 1, 1), strides=(2, 1, 1), padding='same', name='AvgPool1'))
+    model.add(Conv3D(64, kernel_size=(3,3,3), activation='relu', padding='same', name='Conv1'))
+    model.add(MaxPooling3D(pool_size=(1,2,2), strides=(1,2,2), padding='valid', name='MaxPool1'))
+    # Block 02
+    model.add(Conv3D(128, kernel_size=(3,3,3), activation='relu', padding='same', name='Conv2'))
+    model.add(MaxPooling3D(pool_size=(2,2,2), strides=(2,2,2), padding='valid', name='MaxPool2'))
+    model.add(Dropout(rate=0.3))
+    # Block 03
+    model.add(Conv3D(256, kernel_size=(3,3,3), activation='relu', padding='same', name='Conv3A'))
+    model.add(Conv3D(256, kernel_size=(3,3,3), activation='relu', padding='same', name='Conv3B'))
+    model.add(MaxPooling3D(pool_size=(2,2,2), strides=(2,2,2), padding='valid', name='MaxPool3'))
+    model.add(Dropout(rate=0.4))
+    # Block 04
+    model.add(Conv3D(512, kernel_size=(3,3,3), activation='relu', padding='same', name='Conv4A'))
+    model.add(Conv3D(512, kernel_size=(3,3,3), activation='relu', padding='same', name='Conv4B'))
+    model.add(MaxPooling3D(pool_size=(2,2,2), strides=(2,2,2), padding='valid', name='MaxPool4'))
+    model.add(Dropout(rate=0.5))
+    # Block 05 
+    model.add(Flatten())
+    model.add(Dense(128, activation='relu'))
+    model.add(Dropout(0.5))
+    model.add(Dense(2, activation='sigmoid'))
+    return model
 
-i = 0
-for num,patient in enumerate(patients):
-    if i == BATCH_SIZE:
-        break
-#    if num % 100 == 0:
-#        print(num)
-    try:
-        first_patient = load_scan(DATA_DIR + patient)
-        first_patient_pixels = get_pixels_hu(first_patient)
-        pix_resampled, spacing = resample(first_patient_pixels, first_patient, [1, 1, 1])
-        pix_resampled = segment_lung_mask(pix_resampled, False)
-        pix_resampled = normalize(pix_resampled)
-        pix_resampled = zero_center(pix_resampled)
+ 
+""" Loads and preprocess labels and patient data """
+def preprocessing(labels, patients, segment_data=False, normalize_data=False, resample_data=False):
+    
+    #test_data = np.empty((BATCH_SIZE, IMG_SIZE_PX, IMG_SIZE_PX, SLICE_COUNT, 1))
+    test_data = []
+    label_data = []
 
-        label = labels.get_value(patient, 'cancer')
-        slices = [cv2.resize(np.array(each_slice), (IMG_SIZE_PX, IMG_SIZE_PX)) for each_slice in pix_resampled]
-        new_slices = []
-        chunk_sizes = math.ceil(len(slices) / SLICE_COUNT)
-        
-        for slice_chunk in chunks(slices, chunk_sizes):
-            slice_chunk = list(map(mean, zip(*slice_chunk)))
-            new_slices.append(slice_chunk)
-        if len(new_slices) == SLICE_COUNT - 1:
-            new_slices.append(new_slices[-1])
-        if len(new_slices) == SLICE_COUNT - 2:
-            new_slices.append(new_slices[-1])
-            new_slices.append(new_slices[-1])
-        if len(new_slices) == SLICE_COUNT + 2:
-            new_val = list(map(mean, zip(*[new_slices[SLICE_COUNT - 1], new_slices[SLICE_COUNT], ])))
-            del new_slices[SLICE_COUNT]
-            new_slices[SLICE_COUNT - 1] = new_val
-        if len(new_slices) == SLICE_COUNT + 1:
-            new_val = list(map(mean, zip(*[new_slices[SLICE_COUNT - 1], new_slices[SLICE_COUNT], ])))
-            del new_slices[SLICE_COUNT]
-            new_slices[SLICE_COUNT - 1] = new_val
+    i = 0
+    for num,patient in enumerate(patients):
+        if i == BATCH_SIZE:
+            break
+    #    if num % 100 == 0:
+    #        print(num)
+        try:
+            first_patient = load_scan(DATA_DIR + patient)
+            first_patient_pixels = get_pixels_hu(first_patient)
+            pix_resampled, spacing = resample(first_patient_pixels, first_patient, [1, 1, 1])
+            if(segment_data):
+                pix_resampled = segment_lung_mask(pix_resampled, False)
+            if(normalize_data):
+                pix_resampled = normalize(pix_resampled)
+            if(resample_data):
+                pix_resampled = zero_center(pix_resampled)
 
-        pix_resampled = np.array(new_slices)
-        #test_data.append([pix_resampled, label])
-        label_data.append(label)
-        np.append(test_data, pix_resampled)
-        i = i + 1
-        print(i)
-    except KeyError as e:
-        print('This is unlabeled data!')
+            label = labels.get_value(patient, 'cancer')
+            slices = [cv2.resize(np.array(each_slice), (IMG_SIZE_PX, IMG_SIZE_PX)) for each_slice in pix_resampled]
+            new_slices = []
+            chunk_sizes = math.ceil(len(slices) / SLICE_COUNT)
+            
+            for slice_chunk in chunks(slices, chunk_sizes):
+                slice_chunk = list(map(mean, zip(*slice_chunk)))
+                new_slices.append(slice_chunk)
+            if len(new_slices) == SLICE_COUNT - 1:
+                new_slices.append(new_slices[-1])
+            if len(new_slices) == SLICE_COUNT - 2:
+                new_slices.append(new_slices[-1])
+                new_slices.append(new_slices[-1])
+            if len(new_slices) == SLICE_COUNT + 2:
+                new_val = list(map(mean, zip(*[new_slices[SLICE_COUNT - 1], new_slices[SLICE_COUNT], ])))
+                del new_slices[SLICE_COUNT]
+                new_slices[SLICE_COUNT - 1] = new_val
+            if len(new_slices) == SLICE_COUNT + 1:
+                new_val = list(map(mean, zip(*[new_slices[SLICE_COUNT - 1], new_slices[SLICE_COUNT], ])))
+                del new_slices[SLICE_COUNT]
+                new_slices[SLICE_COUNT - 1] = new_val
 
-np.save(OUTPUT_DIR + 'testdata-{}-{}-{}'.format(IMG_SIZE_PX,IMG_SIZE_PX,SLICE_COUNT), test_data)
-np.save(OUTPUT_DIR + 'labels', label_data)
-print('ok')
+            pix_resampled = np.array(new_slices)
+            #test_data.append([pix_resampled, label])
+            test_data.append(pix_resampled)
+            label_data.append(label)
+            #np.append(test_data, pix_resampled)
+            i = i + 1
+            print(i)
+        except KeyError as e:
+            print('This is unlabeled data!')
+    
+    return test_data, label_data
+
+##########################################
+############# data generator #############
+##########################################
+
+class DataGenerator(object):
+  'Generates data for Keras'
+  def __init__(self, dim_x = IMG_SIZE_PX, dim_y = IMG_SIZE_PX, dim_z = IMG_SIZE_PX, batch_size = BATCH_SIZE, shuffle = True):
+      'Initialization'
+      self.dim_x = dim_x
+      self.dim_y = dim_y
+      self.dim_z = dim_z
+      self.batch_size = batch_size
+      self.shuffle = shuffle
+
+  def generate(self, labels, list_IDs):
+      'Generates batches of samples'
+      # Infinite loop
+      while 1:
+          # Generate order of exploration of dataset
+          indexes = self.__get_exploration_order(list_IDs)
+
+          # Generate batches
+          imax = int(len(indexes)/self.batch_size)
+          for i in range(imax):
+              # Find list of IDs
+              list_IDs_temp = [list_IDs[k] for k in indexes[i*self.batch_size:(i+1)*self.batch_size]]
+
+              # Generate data
+              X, y = self.__data_generation(labels, list_IDs_temp)
+
+              yield X, y
+
+  def __get_exploration_order(self, list_IDs):
+      'Generates order of exploration'
+      # Find exploration order
+      indexes = np.arange(len(list_IDs))
+      if self.shuffle == True:
+          np.random.shuffle(indexes)
+
+      return indexes
+
+  def __data_generation(self, labels, list_IDs_temp):
+      'Generates data of batch_size samples' # X : (n_samples, v_size, v_size, v_size, n_channels)
+      # Initialization
+      X = np.empty((self.batch_size, self.dim_x, self.dim_y, self.dim_z, 1))
+      y = np.empty((self.batch_size), dtype = int)
+
+      # Generate data
+      for i, ID in enumerate(list_IDs_temp):
+          # Store volume
+          X[i, :, :, :, 0] = np.load(ID + '.npy')
+
+          # Store class
+          y[i] = labels[ID]
+
+      return X, sparsify(y)
+
+def sparsify(y):
+  'Returns labels in binary NumPy array'
+  n_classes = 2
+  return np.array([[1 if y[i] == j else 0 for j in range(n_classes)]
+                   for i in range(y.shape[0])])
 
 ####################################
 ### Convolutional Neural Network ###
 ####################################
 
-# load the data
-much_data = np.load(OUTPUT_DIR + 'testdata-{}-{}-{}.npy'.format(IMG_SIZE_PX,IMG_SIZE_PX,SLICE_COUNT))  # load data for the cnn here
-much_data = much_data.reshape(BATCH_SIZE, IMG_SIZE_PX, IMG_SIZE_PX, SLICE_COUNT, 1)
+# pre process data
+all_data, all_labels = preprocessing(labs, pats, segment_data=True, normalize_data=True, resample_data=True)
 
-input_shape = (IMG_SIZE_PX, IMG_SIZE_PX, SLICE_COUNT, 1)
+params = {'dim_x': IMG_SIZE_PX,
+          'dim_y': IMG_SIZE_PX,
+          'dim_z': IMG_SIZE_PX,
+          'batch_size': BATCH_SIZE,
+          'shuffle': True}
 
-# Create training data
-X_train = much_data
-Y_train = np.load(OUTPUT_DIR + 'labels.npy')
-Y_train = keras.utils.to_categorical(Y_train, 2)
+# Generators
+training_generator = DataGenerator(**params).generate(all_labels, all_data)
+validation_generator = DataGenerator(**params).generate(all_labels, all_data)
 
 """
-OLD TRAINING DATA STUFF
+# OLD STUFF
+# reshape data
+all_data.reshape(BATCH_SIZE, IMG_SIZE_PX, IMG_SIZE_PX, SLICE_COUNT, 1)
+all_labels = keras.utils.to_categorical(all_labels, 2)
 
-Xtrain_data = much_data[:-100]
-Ytrain_data = Y_train[:-100]
+# Create training and validation data
+Xtrain_data = all_data[:-100]
+Ytrain_data = all_labels[:-100]
+Xvalidation_data = all_data[-100:]
+Yvalidation_data = all_labels[-100:]
 """
 
-Xvalidation_data = much_data[-BATCH_SIZE/2:]
-Yvalidation_data = Y_train[-BATCH_SIZE/2:]
-
-### Building the network (model) ###
-
-model = keras.models.Sequential()
-# Block 01
-model.add(AveragePooling3D(input_shape=input_shape,pool_size=(2, 1, 1), strides=(2, 1, 1), padding='same', name='AvgPool1'))
-model.add(Conv3D(64, kernel_size=(3,3,3), activation='relu', padding='same', name='Conv1'))
-model.add(MaxPooling3D(pool_size=(1,2,2), strides=(1,2,2), padding='valid', name='MaxPool1'))
-# Block 02
-model.add(Conv3D(128, kernel_size=(3,3,3), activation='relu', padding='same', name='Conv2'))
-model.add(MaxPooling3D(pool_size=(2,2,2), strides=(2,2,2), padding='valid', name='MaxPool2'))
-model.add(Dropout(rate=0.3))
-# Block 03
-model.add(Conv3D(256, kernel_size=(3,3,3), activation='relu', padding='same', name='Conv3A'))
-model.add(Conv3D(256, kernel_size=(3,3,3), activation='relu', padding='same', name='Conv3B'))
-model.add(MaxPooling3D(pool_size=(2,2,2), strides=(2,2,2), padding='valid', name='MaxPool3'))
-model.add(Dropout(rate=0.4))
-# Block 04
-model.add(Conv3D(512, kernel_size=(3,3,3), activation='relu', padding='same', name='Conv4A'))
-model.add(Conv3D(512, kernel_size=(3,3,3), activation='relu', padding='same', name='Conv4B'))
-model.add(MaxPooling3D(pool_size=(2,2,2), strides=(2,2,2), padding='valid', name='MaxPool4'))
-model.add(Dropout(rate=0.5))
-# Block 05 (?? TODO ??)
-model.add(Flatten())
-model.add(Dense(128, activation='relu'))
-model.add(Dropout(0.5))
-# Softmax Layer
-model.add(Dense(2))
-model.add(Activation('softmax'))
+# Build the network model
+model = create_network((IMG_SIZE_PX, IMG_SIZE_PX, SLICE_COUNT, 1))
 print('Done Building\n')
 
 # Compile 
@@ -298,17 +372,20 @@ model.compile(loss='categorical_crossentropy', optimizer=opt, metrics=['accuracy
 print('Done Compiling\n')
 
 # Fit network
-model.fit_generator(batch_generator(X_train, Y_train, 1),steps_per_epoch=1, epochs=1, verbose=0, validation_data=(Xvalidation_data, Yvalidation_data))
+model.fit_generator(generator = training_generator,
+                    steps_per_epoch = len(all_data)//BATCH_SIZE,
+                    validation_data = validation_generator,
+                    validation_steps = len(all_data)//BATCH_SIZE)
 print('done fitting\n')
 
 # Save the model
-model.save(OUTPUT_DIR + 'CNN_model.h5')
-print('model saved to dir: ' + OUTPUT_DIR)
+#model.save(OUTPUT_DIR + 'CNN_model.h5')
+#print('model saved to dir: ' + OUTPUT_DIR)
 
 # Load the model
 #model = load_model(OUTPUT_DIR + 'testmodel.h5')
 
 # Evaluate
-scores = model.evaluate(X_train, Y_train, verbose=1)
-print('Test loss:', scores[0])
-print('Test accuracy:', scores[1])
+#scores = model.evaluate(X_train, Y_train, verbose=1)
+#print('Test loss:', scores[0])
+#print('Test accuracy:', scores[1])

@@ -267,10 +267,8 @@ def preprocessing(train_size, labels, patients, segment_data=False, normalize_da
             print(i)
             dictionaryB[str(patient)] = label
             np.save(OUTPUT_DIR + str(patient), pix_resampled)
-            if(i < train_size):
-                patientNames.append(str(patient))
-            elif(i >= train_size):
-                valNames.append(str(patient))
+            patientNames.append(str(patient))
+            valNames.append(str(patient))
         except KeyError as e:
             print('This is unlabeled data!')
                         
@@ -356,6 +354,8 @@ def sparsify(y):
 
 # pre process data
 partition, labels = preprocessing(TRAIN_NUM, labs, pats, segment_data=True, normalize_data=True, resample_data=True)
+print(partition)
+print(labels)
 
 params = {'dim_x': IMG_SIZE_PX,
           'dim_y': IMG_SIZE_PX,
@@ -366,19 +366,6 @@ params = {'dim_x': IMG_SIZE_PX,
 # Generators
 training_generator = DataGenerator(**params).generate(labels, partition['train'])
 validation_generator = DataGenerator(**params).generate(labels, partition['validation'])
-
-
-# OLD STUFF
-# reshape data
-#all_data.reshape(BATCH_SIZE, IMG_SIZE_PX, IMG_SIZE_PX, SLICE_COUNT, 1)
-#all_labels = keras.utils.to_categorical(all_labels, 2)
-
-# Create training and validation data
-#Xtrain_data = all_data[:-100]
-#Ytrain_data = all_labels[:-100]
-#Xvalidation_data = all_data[-100:]
-#Yvalidation_data = all_labels[-100:]
-
 
 # Build the network model
 model = create_network((IMG_SIZE_PX, IMG_SIZE_PX, SLICE_COUNT, 1))

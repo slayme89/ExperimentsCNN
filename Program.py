@@ -274,16 +274,16 @@ def preprocessing(train_size, labels, patients, segment_data=False, normalize_da
         except KeyError as e:
             print('This is unlabeled data!')
                         
-        dictionaryA['train'] = patientNames
-        dictionaryA['validation'] = valNames
+    dictionaryA['train'] = patientNames
+    dictionaryA['validation'] = valNames
         
-        w = csv.writer(open(OUTPUT_DIR + 'partitionDict.csv', 'w'))
-        for key, val in dictionaryA.items():
-            w.writerow([key, val])
+    w = csv.writer(open(OUTPUT_DIR + 'partitionDict.csv', 'w'))
+    for key, val in dictionaryA.items():
+        w.writerow([key, val])
         
-        u = csv.writer(open(OUTPUT_DIR + 'labelsDict.csv', 'w'))
-        for key, val in dictionaryB.items():
-            w.writerow([key, val])
+    u = csv.writer(open(OUTPUT_DIR + 'labelsDict.csv', 'w'))
+    for key, val in dictionaryB.items():
+        w.writerow([key, val])
             
     return dictionaryA, dictionaryB
     

@@ -33,7 +33,8 @@ pats = os.listdir(DATA_DIR)
 
 IMG_SIZE_PX = 32  #original 512
 SLICE_COUNT = 32  #number of slices per patient
-BATCH_SIZE = 1    #number of patients 
+BATCH_SIZE = 1    #number of patients
+TRAIN_NUM = 1     #number of patients to train on (validates on the rest)
 
 ################################
 ### Pre processing functions ###
@@ -284,7 +285,7 @@ def preprocessing(train_size, labels, patients, segment_data=False, normalize_da
         for key, val in dictionaryB.items():
             w.writerow([key, val])
             
-        return dictionaryA, dictionaryB
+    return dictionaryA, dictionaryB
     
 ##########################################
 ############# data generator #############
@@ -354,7 +355,7 @@ def sparsify(y):
                     ####################################
 
 # pre process data
-partition, labels = preprocessing(1, labs, pats, segment_data=True, normalize_data=True, resample_data=True)
+partition, labels = preprocessing(TRAIN_NUM, labs, pats, segment_data=True, normalize_data=True, resample_data=True)
 
 params = {'dim_x': IMG_SIZE_PX,
           'dim_y': IMG_SIZE_PX,

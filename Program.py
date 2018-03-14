@@ -5,6 +5,7 @@ import os
 import matplotlib.pyplot as plt
 import cv2
 import math
+import csv
 import tensorflow as tf
 import scipy.ndimage.interpolation
 import keras
@@ -212,14 +213,17 @@ def create_network(input_shape):
 
  
 """ Loads and preprocess labels and patient data """
-def preprocessing(labels, patients, segment_data=False, normalize_data=False, resample_data=False):
+def preprocessing(train_size, labels, patients, segment_data=False, normalize_data=False, resample_data=False):
     
     #test_data = np.empty((BATCH_SIZE, IMG_SIZE_PX, IMG_SIZE_PX, SLICE_COUNT, 1))
-    test_data = []
-    label_data = []
+    patientNames = []
+    valNames = []
+    dictionaryA = {}
+    dictionaryB = {}
 
     i = 0
     for num,patient in enumerate(patients):
+        print(patient)
         if i == BATCH_SIZE:
             break
     #    if num % 100 == 0:
@@ -258,17 +262,30 @@ def preprocessing(labels, patients, segment_data=False, normalize_data=False, re
                 new_slices[SLICE_COUNT - 1] = new_val
 
             pix_resampled = np.array(new_slices)
-            #test_data.append([pix_resampled, label])
-            test_data.append(pix_resampled)
-            label_data.append(label)
-            #np.append(test_data, pix_resampled)
-            i = i + 1
+            i += 1
             print(i)
+            dictionaryB[str(patient)] = label
+            np.save(OUTPUT_DIR + str(patient), pix_resampled)
+            if(i < train_size):
+                patientNames.append(str(patient))
+            elif(i >= train_size):
+                valNames.append(str(patient))
         except KeyError as e:
             print('This is unlabeled data!')
+                        
+        dictionaryA['train'] = patientNames
+        dictionaryA['validation'] = valNames
+        
+        w = csv.writer(open(OUTPUT_DIR + 'partitionDict.csv', 'w'))
+        for key, val in dictionaryA.items():
+            w.writerow([key, val])
+        
+        u = csv.writer(open(OUTPUT_DIR + 'labelsDict.csv', 'w'))
+        for key, val in dictionaryB.items():
+            w.writerow([key, val])
+            
+        return dictionaryA, dictionaryB
     
-    return test_data, label_data
-
 ##########################################
 ############# data generator #############
 ##########################################
@@ -319,7 +336,7 @@ class DataGenerator(object):
       # Generate data
       for i, ID in enumerate(list_IDs_temp):
           # Store volume
-          X[i, :, :, :, 0] = np.load(ID + '.npy')
+          X[i, :, :, :, 0] = np.load(OUTPUT_DIR + ID + '.npy')
 
           # Store class
           y[i] = labels[ID]
@@ -332,12 +349,12 @@ def sparsify(y):
   return np.array([[1 if y[i] == j else 0 for j in range(n_classes)]
                    for i in range(y.shape[0])])
 
-####################################
-### Convolutional Neural Network ###
-####################################
+                    ####################################
+####################### Convolutional Neural Network ########################
+                    ####################################
 
 # pre process data
-all_data, all_labels = preprocessing(labs, pats, segment_data=True, normalize_data=True, resample_data=True)
+partition, labels = preprocessing(1, labs, pats, segment_data=True, normalize_data=True, resample_data=True)
 
 params = {'dim_x': IMG_SIZE_PX,
           'dim_y': IMG_SIZE_PX,
@@ -346,21 +363,21 @@ params = {'dim_x': IMG_SIZE_PX,
           'shuffle': True}
 
 # Generators
-training_generator = DataGenerator(**params).generate(all_labels, all_data)
-validation_generator = DataGenerator(**params).generate(all_labels, all_data)
+training_generator = DataGenerator(**params).generate(labels, partition['train'])
+validation_generator = DataGenerator(**params).generate(labels, partition['validation'])
 
-"""
+
 # OLD STUFF
 # reshape data
-all_data.reshape(BATCH_SIZE, IMG_SIZE_PX, IMG_SIZE_PX, SLICE_COUNT, 1)
-all_labels = keras.utils.to_categorical(all_labels, 2)
+#all_data.reshape(BATCH_SIZE, IMG_SIZE_PX, IMG_SIZE_PX, SLICE_COUNT, 1)
+#all_labels = keras.utils.to_categorical(all_labels, 2)
 
 # Create training and validation data
-Xtrain_data = all_data[:-100]
-Ytrain_data = all_labels[:-100]
-Xvalidation_data = all_data[-100:]
-Yvalidation_data = all_labels[-100:]
-"""
+#Xtrain_data = all_data[:-100]
+#Ytrain_data = all_labels[:-100]
+#Xvalidation_data = all_data[-100:]
+#Yvalidation_data = all_labels[-100:]
+
 
 # Build the network model
 model = create_network((IMG_SIZE_PX, IMG_SIZE_PX, SLICE_COUNT, 1))
@@ -373,9 +390,9 @@ print('Done Compiling\n')
 
 # Fit network
 model.fit_generator(generator = training_generator,
-                    steps_per_epoch = len(all_data)//BATCH_SIZE,
+                    steps_per_epoch = len(partition['train'])//BATCH_SIZE,
                     validation_data = validation_generator,
-                    validation_steps = len(all_data)//BATCH_SIZE)
+                    validation_steps = len(partition['validation'])//BATCH_SIZE)
 print('done fitting\n')
 
 # Save the model

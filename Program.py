@@ -5,6 +5,7 @@ import os
 import matplotlib.pyplot as plt
 import cv2
 import math
+import uuid
 import csv
 import tensorflow as tf
 import scipy.ndimage.interpolation
@@ -16,35 +17,38 @@ from keras.optimizers import SGD
 from keras.models import load_model, Sequential, Model
 from keras.layers import Convolution3D, Conv3D, MaxPooling3D, UpSampling3D, LeakyReLU, BatchNormalization, Flatten, Dense, Dropout, ZeroPadding3D, AveragePooling3D, Activation
 
-#################
-### Constants ###
-#################
+############################
+### Constants (Settings) ###
+############################
 
 # The folder with all patient folders
 DATA_DIR = 'D:/Data/stage1_patients/'
+
 # The labels .csv file destination
 labs = pd.read_csv('D:/Data/stage1_labels/stage1_labels.csv', index_col=0)
-# output folder for saving processed data and network model
+
+# Output folder for saving processed data and network model
 OUTPUT_DIR = 'D:/Data/pre/'
 
-much_data = []
-
+# Dir of patients
 pats = os.listdir(DATA_DIR)
 
 IMG_SIZE_PX = 32  #original 512
 SLICE_COUNT = 32  #number of slices per patient
-NUM_PATIENTS = 20 #number of patients total
+NUM_PATIENTS = 20 #number of patients
 BATCH_SIZE = 1    #batch_size
 TRAIN_SIZE = 0.7  #training percent (float num)
+
+# Pre processing options:
+SEGMENT = True
+NORMALIZE = True
+ZERO_CENT = True
 
 ################################
 ### Pre processing functions ###
 ################################
 """ Chunks """
 def chunks(l, n):
-    # Credit: Ned Batchelder
-    # Link: http://stackoverflow.com/questions/312443/how-do-you-split-a-list-into-evenly-sized-chunks
-    # Yield successive n-sized chunks from l.
     for i in range(0, len(l), n):
         yield l[i:i + n]
 
@@ -105,8 +109,7 @@ def segment_lung_mask(image, fill_lung_structures=True):
     # Fill the air around the person
     binary_image[background_label == labels] = 2
 
-    # Method of filling the lung structures (that is superior to something like
-    # morphological closing)
+    # Method of filling the lung structures
     if fill_lung_structures:
         # For every slice we determine the largest solid structure
         for i, axial_slice in enumerate(binary_image):
@@ -185,7 +188,6 @@ def batch_generator(features, labels, batch_size):
             batch_labels[i] = labels[index]
             yield (batch_features, batch_labels)
 
-
 def create_network(input_shape):
     model = keras.models.Sequential()
     # Block 01
@@ -215,8 +217,11 @@ def create_network(input_shape):
 
     return model
  
+#######################
+### Pre Processing ####
+#######################
 """ Loads and preprocess labels and patient data """
-def preprocessing(train_size, labels, patients, segment_data=False, normalize_data=False, resample_data=False):
+def preprocessing(train_size, labels, patients, segment_data=False, normalize_data=False, zero_cent_data=False):
     patientNames = []
     dictionaryA = {}
     dictionaryB = {}
@@ -236,7 +241,7 @@ def preprocessing(train_size, labels, patients, segment_data=False, normalize_da
                 pix_resampled = segment_lung_mask(pix_resampled, False)
             if(normalize_data):
                 pix_resampled = normalize(pix_resampled)
-            if(resample_data):
+            if(zero_cent_data):
                 pix_resampled = zero_center(pix_resampled)
             label = labels.get_value(patient, 'cancer')
             slices = [cv2.resize(np.array(each_slice), (IMG_SIZE_PX, IMG_SIZE_PX)) for each_slice in pix_resampled]
@@ -285,10 +290,10 @@ def preprocessing(train_size, labels, patients, segment_data=False, normalize_da
             
     return dictionaryA, dictionaryB
     
-##########################################
-############# data generator #############
-##########################################
-
+######################
+### data Generator ###
+######################
+""" Generates data for the .fit_generator()"""
 class DataGenerator(object):
   'Generates data for Keras'
   def __init__(self, dim_x = 32, dim_y = 32, dim_z = 32, batch_size = 32, shuffle = True):
@@ -348,12 +353,12 @@ def sparsify(y):
   return np.array([[1 if y[i] == j else 0 for j in range(n_classes)]
                    for i in range(y.shape[0])])
 
-##############################################################
-######## Convolutional Neural Network ########################
-##############################################################
+####################################
+### Convolutional Neural Network ###
+####################################
 
-# pre process data
-partition, labels = preprocessing(TRAIN_SIZE, labs, pats, segment_data=True, normalize_data=True, resample_data=True)
+# Pre process data
+partition, labels = preprocessing(TRAIN_SIZE, labs, pats, segment_data=SEGMENT, normalize_data=NORMALIZE, zero_cent_data=ZERO_CENT)
 
 params = {'dim_x': IMG_SIZE_PX,
           'dim_y': IMG_SIZE_PX,
@@ -361,15 +366,15 @@ params = {'dim_x': IMG_SIZE_PX,
           'batch_size': BATCH_SIZE,
           'shuffle': True}
 
-# Generators
+# Create generators
 training_generator = DataGenerator(**params).generate(labels, partition['train'])
 validation_generator = DataGenerator(**params).generate(labels, partition['validation'])
 
-# Build the network model
+# Build the network model (3D CNN)
 model = create_network((IMG_SIZE_PX, IMG_SIZE_PX, SLICE_COUNT, 1))
 print('Done Building\n')
 
-# Compile 
+# Compile the model
 opt = keras.optimizers.rmsprop(lr=0.0001, decay=1e-6)
 model.compile(loss='categorical_crossentropy', optimizer=opt, metrics=['accuracy'])
 print('Done Compiling\n')
@@ -381,14 +386,15 @@ model.fit_generator(generator = training_generator,
                     validation_steps=len(partition['validation'])//BATCH_SIZE)
 print('done fitting\n')
 
-# Save the model
-#model.save(OUTPUT_DIR + 'CNN_model.h5')
-#print('model saved to dir: ' + OUTPUT_DIR)
+# Save the model with a uniqe name
+strName = str(uuid.uuid4())
+if(SEGMENT):
+    strName += "_seg"
+if(NORMALIZE):
+    strName += "_norm"
+if(ZERO_CENT):
+    strName += "_zeroc"
 
-# Load the model
-#model = load_model(OUTPUT_DIR + 'testmodel.h5')
-
-# Evaluate
-scores = model.evaluate(X_train, Y_train, verbose=1)
-print('Test loss:', scores[0])
-print('Test accuracy:', scores[1])
+print(strName)
+model.save(OUTPUT_DIR + strName + '.h5')
+print('model saved\n)

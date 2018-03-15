@@ -14,7 +14,7 @@ from numpy import random
 from keras.utils import np_utils
 from keras.optimizers import SGD
 from keras.models import load_model, Sequential, Model
-from keras.layers import Input, Convolution2D, MaxPooling2D, UpSampling2D, merge, Convolution3D, Conv3D, MaxPooling3D, UpSampling3D, LeakyReLU, BatchNormalization, Flatten, Dense, Dropout, ZeroPadding3D, AveragePooling3D, Activation
+from keras.layers import Convolution3D, Conv3D, MaxPooling3D, UpSampling3D, LeakyReLU, BatchNormalization, Flatten, Dense, Dropout, ZeroPadding3D, AveragePooling3D, Activation
 
 #################
 ### Constants ###
@@ -34,7 +34,7 @@ pats = os.listdir(DATA_DIR)
 IMG_SIZE_PX = 32  #original 512
 SLICE_COUNT = 32  #number of slices per patient
 BATCH_SIZE = 1    #number of patients
-TRAIN_NUM = 1     #number of patients to train on (validates on the rest)
+TRAIN_SIZE = 1     #number of patients to train on (validates on the rest)
 
 ################################
 ### Pre processing functions ###
@@ -189,36 +189,35 @@ def create_network(input_shape):
     model = keras.models.Sequential()
     # Block 01
     model.add(AveragePooling3D(input_shape=input_shape,pool_size=(2, 1, 1), strides=(2, 1, 1), padding='same', name='AvgPool1'))
-    model.add(Conv3D(64, kernel_size=(3,3,3), activation='relu', padding='same', name='Conv1'))
+    model.add(Conv3D(64, kernel_size=(3,3,3), strides=(1, 1, 1), activation='relu', padding='same', name='Conv1'))
     model.add(MaxPooling3D(pool_size=(1,2,2), strides=(1,2,2), padding='valid', name='MaxPool1'))
     # Block 02
-    model.add(Conv3D(128, kernel_size=(3,3,3), activation='relu', padding='same', name='Conv2'))
+    model.add(Conv3D(128, kernel_size=(3,3,3), strides=(1, 1, 1), activation='relu', padding='same', name='Conv2'))
     model.add(MaxPooling3D(pool_size=(2,2,2), strides=(2,2,2), padding='valid', name='MaxPool2'))
     model.add(Dropout(rate=0.3))
     # Block 03
-    model.add(Conv3D(256, kernel_size=(3,3,3), activation='relu', padding='same', name='Conv3A'))
-    model.add(Conv3D(256, kernel_size=(3,3,3), activation='relu', padding='same', name='Conv3B'))
+    model.add(Conv3D(256, kernel_size=(3,3,3), strides=(1, 1, 1), activation='relu', padding='same', name='Conv3A'))
+    model.add(Conv3D(256, kernel_size=(3,3,3), strides=(1, 1, 1), activation='relu', padding='same', name='Conv3B'))
     model.add(MaxPooling3D(pool_size=(2,2,2), strides=(2,2,2), padding='valid', name='MaxPool3'))
     model.add(Dropout(rate=0.4))
     # Block 04
-    model.add(Conv3D(512, kernel_size=(3,3,3), activation='relu', padding='same', name='Conv4A'))
-    model.add(Conv3D(512, kernel_size=(3,3,3), activation='relu', padding='same', name='Conv4B'))
+    model.add(Conv3D(512, kernel_size=(3,3,3), strides=(1, 1, 1), activation='relu', padding='same', name='Conv4A'))
+    model.add(Conv3D(512, kernel_size=(3,3,3), strides=(1, 1, 1), activation='relu', padding='same', name='Conv4B'))
     model.add(MaxPooling3D(pool_size=(2,2,2), strides=(2,2,2), padding='valid', name='MaxPool4'))
     model.add(Dropout(rate=0.5))
     # Block 05 
+    model.add(Conv3D(256, kernel_size=(3,3,3), strides=(1, 1, 1), activation='relu', padding='same', name='Conv5'))
     model.add(Flatten())
     model.add(Dense(128, activation='relu'))
-    model.add(Dropout(0.5))
-    model.add(Dense(2, activation='sigmoid'))
-    return model
+    model.add(Dropout(0.6))
+    model.add(Dense(2, activation='softmax'))
 
+    return model
  
 """ Loads and preprocess labels and patient data """
 def preprocessing(train_size, labels, patients, segment_data=False, normalize_data=False, resample_data=False):
     
-    #test_data = np.empty((BATCH_SIZE, IMG_SIZE_PX, IMG_SIZE_PX, SLICE_COUNT, 1))
     patientNames = []
-    valNames = []
     dictionaryA = {}
     dictionaryB = {}
 
@@ -268,12 +267,15 @@ def preprocessing(train_size, labels, patients, segment_data=False, normalize_da
             dictionaryB[str(patient)] = label
             np.save(OUTPUT_DIR + str(patient), pix_resampled)
             patientNames.append(str(patient))
-            valNames.append(str(patient))
+
         except KeyError as e:
             print('This is unlabeled data!')
-                        
-    dictionaryA['train'] = patientNames
-    dictionaryA['validation'] = valNames
+    
+    print(train_size * BATCH_SIZE)
+    print(BATCH_SIZE - (train_size * BATCH_SIZE))
+    random.shuffle(patientNames)                    
+    dictionaryA['train'] = patientNames[:train_size * BATCH_SIZE]
+    dictionaryA['validation'] = patientNames[BATCH_SIZE - (train_size * BATCH_SIZE):]
         
     w = csv.writer(open(OUTPUT_DIR + 'partitionDict.csv', 'w'))
     for key, val in dictionaryA.items():
@@ -281,7 +283,7 @@ def preprocessing(train_size, labels, patients, segment_data=False, normalize_da
         
     u = csv.writer(open(OUTPUT_DIR + 'labelsDict.csv', 'w'))
     for key, val in dictionaryB.items():
-        w.writerow([key, val])
+        u.writerow([key, val])
             
     return dictionaryA, dictionaryB
     
@@ -348,14 +350,12 @@ def sparsify(y):
   return np.array([[1 if y[i] == j else 0 for j in range(n_classes)]
                    for i in range(y.shape[0])])
 
-                    ####################################
-####################### Convolutional Neural Network ########################
-                    ####################################
+##############################################################
+######## Convolutional Neural Network ########################
+##############################################################
 
 # pre process data
-partition, labels = preprocessing(TRAIN_NUM, labs, pats, segment_data=True, normalize_data=True, resample_data=True)
-print(partition)
-print(labels)
+partition, labels = preprocessing(TRAIN_SIZE, labs, pats, segment_data=True, normalize_data=True, resample_data=True)
 
 params = {'dim_x': IMG_SIZE_PX,
           'dim_y': IMG_SIZE_PX,
@@ -382,6 +382,7 @@ model.fit_generator(generator = training_generator,
                     validation_data = validation_generator,
                     validation_steps = len(partition['validation'])//BATCH_SIZE)
 print('done fitting\n')
+
 
 # Save the model
 #model.save(OUTPUT_DIR + 'CNN_model.h5')

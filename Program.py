@@ -33,8 +33,9 @@ pats = os.listdir(DATA_DIR)
 
 IMG_SIZE_PX = 32  #original 512
 SLICE_COUNT = 32  #number of slices per patient
-BATCH_SIZE = 1    #number of patients
-TRAIN_SIZE = 1     #number of patients to train on (validates on the rest)
+NUM_PATIENTS = 20 #number of patients total
+BATCH_SIZE = 1    #batch_size
+TRAIN_SIZE = 0.7  #training percent (float num)
 
 ################################
 ### Pre processing functions ###
@@ -188,21 +189,21 @@ def batch_generator(features, labels, batch_size):
 def create_network(input_shape):
     model = keras.models.Sequential()
     # Block 01
-    model.add(AveragePooling3D(input_shape=input_shape,pool_size=(2, 1, 1), strides=(2, 1, 1), padding='same', name='AvgPool1'))
-    model.add(Conv3D(64, kernel_size=(3,3,3), strides=(1, 1, 1), activation='relu', padding='same', name='Conv1'))
+    model.add(AveragePooling3D(input_shape=input_shape,pool_size=(2,1,1), strides=(2,1,1), padding='same', name='AvgPool1'))
+    model.add(Conv3D(64, kernel_size=(3,3,3), strides=(1,1,1), activation='relu', padding='same', name='Conv1'))
     model.add(MaxPooling3D(pool_size=(1,2,2), strides=(1,2,2), padding='valid', name='MaxPool1'))
     # Block 02
-    model.add(Conv3D(128, kernel_size=(3,3,3), strides=(1, 1, 1), activation='relu', padding='same', name='Conv2'))
+    model.add(Conv3D(128, kernel_size=(3,3,3), strides=(1,1,1), activation='relu', padding='same', name='Conv2'))
     model.add(MaxPooling3D(pool_size=(2,2,2), strides=(2,2,2), padding='valid', name='MaxPool2'))
     model.add(Dropout(rate=0.3))
     # Block 03
-    model.add(Conv3D(256, kernel_size=(3,3,3), strides=(1, 1, 1), activation='relu', padding='same', name='Conv3A'))
-    model.add(Conv3D(256, kernel_size=(3,3,3), strides=(1, 1, 1), activation='relu', padding='same', name='Conv3B'))
+    model.add(Conv3D(256, kernel_size=(3,3,3), strides=(1,1,1), activation='relu', padding='same', name='Conv3A'))
+    model.add(Conv3D(256, kernel_size=(3,3,3), strides=(1,1,1), activation='relu', padding='same', name='Conv3B'))
     model.add(MaxPooling3D(pool_size=(2,2,2), strides=(2,2,2), padding='valid', name='MaxPool3'))
     model.add(Dropout(rate=0.4))
     # Block 04
-    model.add(Conv3D(512, kernel_size=(3,3,3), strides=(1, 1, 1), activation='relu', padding='same', name='Conv4A'))
-    model.add(Conv3D(512, kernel_size=(3,3,3), strides=(1, 1, 1), activation='relu', padding='same', name='Conv4B'))
+    model.add(Conv3D(512, kernel_size=(3,3,3), strides=(1,1,1), activation='relu', padding='same', name='Conv4A'))
+    model.add(Conv3D(512, kernel_size=(3,3,3), strides=(1,1,1), activation='relu', padding='same', name='Conv4B'))
     model.add(MaxPooling3D(pool_size=(2,2,2), strides=(2,2,2), padding='valid', name='MaxPool4'))
     model.add(Dropout(rate=0.5))
     # Block 05 
@@ -216,15 +217,14 @@ def create_network(input_shape):
  
 """ Loads and preprocess labels and patient data """
 def preprocessing(train_size, labels, patients, segment_data=False, normalize_data=False, resample_data=False):
-    
     patientNames = []
     dictionaryA = {}
     dictionaryB = {}
-
     i = 0
+    
     for num,patient in enumerate(patients):
-        print(patient)
-        if i == BATCH_SIZE:
+        #print(patient)
+        if i == NUM_PATIENTS:
             break
     #    if num % 100 == 0:
     #        print(num)
@@ -238,12 +238,11 @@ def preprocessing(train_size, labels, patients, segment_data=False, normalize_da
                 pix_resampled = normalize(pix_resampled)
             if(resample_data):
                 pix_resampled = zero_center(pix_resampled)
-
             label = labels.get_value(patient, 'cancer')
             slices = [cv2.resize(np.array(each_slice), (IMG_SIZE_PX, IMG_SIZE_PX)) for each_slice in pix_resampled]
             new_slices = []
             chunk_sizes = math.ceil(len(slices) / SLICE_COUNT)
-            
+
             for slice_chunk in chunks(slices, chunk_sizes):
                 slice_chunk = list(map(mean, zip(*slice_chunk)))
                 new_slices.append(slice_chunk)
@@ -271,11 +270,10 @@ def preprocessing(train_size, labels, patients, segment_data=False, normalize_da
         except KeyError as e:
             print('This is unlabeled data!')
     
-    print(train_size * BATCH_SIZE)
-    print(BATCH_SIZE - (train_size * BATCH_SIZE))
-    random.shuffle(patientNames)                    
-    dictionaryA['train'] = patientNames[:train_size * BATCH_SIZE]
-    dictionaryA['validation'] = patientNames[BATCH_SIZE - (train_size * BATCH_SIZE):]
+    train_count = round(train_size * NUM_PATIENTS)
+    np.random.shuffle(patientNames)                    
+    dictionaryA['train'] = patientNames[:train_count]
+    dictionaryA['validation'] = patientNames[train_count:]
         
     w = csv.writer(open(OUTPUT_DIR + 'partitionDict.csv', 'w'))
     for key, val in dictionaryA.items():
@@ -293,7 +291,7 @@ def preprocessing(train_size, labels, patients, segment_data=False, normalize_da
 
 class DataGenerator(object):
   'Generates data for Keras'
-  def __init__(self, dim_x = IMG_SIZE_PX, dim_y = IMG_SIZE_PX, dim_z = IMG_SIZE_PX, batch_size = BATCH_SIZE, shuffle = True):
+  def __init__(self, dim_x = 32, dim_y = 32, dim_z = 32, batch_size = 32, shuffle = True):
       'Initialization'
       self.dim_x = dim_x
       self.dim_y = dim_y
@@ -378,11 +376,10 @@ print('Done Compiling\n')
 
 # Fit network
 model.fit_generator(generator = training_generator,
-                    steps_per_epoch = len(partition['train'])//BATCH_SIZE,
-                    validation_data = validation_generator,
-                    validation_steps = len(partition['validation'])//BATCH_SIZE)
+                    steps_per_epoch=len(partition['train'])//BATCH_SIZE,
+                    validation_data=validation_generator,
+                    validation_steps=len(partition['validation'])//BATCH_SIZE)
 print('done fitting\n')
-
 
 # Save the model
 #model.save(OUTPUT_DIR + 'CNN_model.h5')
@@ -392,6 +389,6 @@ print('done fitting\n')
 #model = load_model(OUTPUT_DIR + 'testmodel.h5')
 
 # Evaluate
-#scores = model.evaluate(X_train, Y_train, verbose=1)
-#print('Test loss:', scores[0])
-#print('Test accuracy:', scores[1])
+scores = model.evaluate(X_train, Y_train, verbose=1)
+print('Test loss:', scores[0])
+print('Test accuracy:', scores[1])

@@ -13,40 +13,53 @@ import keras
 from skimage import measure, morphology
 from numpy import random
 from keras.utils import np_utils
+from keras.callbacks import History
 from keras.optimizers import SGD
 from keras.models import load_model, Sequential, Model
-from keras.layers import Convolution3D, Conv3D, MaxPooling3D, UpSampling3D, LeakyReLU, BatchNormalization, Flatten, Dense, Dropout, ZeroPadding3D, AveragePooling3D, Activation
+from keras.layers import Conv3D, MaxPooling3D, Flatten, Dense, Dropout, AveragePooling3D
 
-############################
-### Constants (Settings) ###
-############################
+################
+### Options: ###
+################
 
-# The folder with all patient folders
+""" File path options: """
+# The data file path (all patients folder)
 DATA_DIR = 'D:/Data/stage1_patients/'
-
-# The labels .csv file destination
+# The labels.csv file path
 labs = pd.read_csv('D:/Data/stage1_labels/stage1_labels.csv', index_col=0)
-
 # Output folder for saving processed data and network model
 OUTPUT_DIR = 'D:/Data/pre/'
 
-# Dir of patients
-pats = os.listdir(DATA_DIR)
+""" Network options: """
+# Crop img to size (Orginal size: 512)
+IMG_SIZE_PX = 32
+# Number of slices per patient
+SLICE_COUNT = 32
+# Number of patients (Amounth of data in total)
+NUM_PATIENTS = 20
+# Training percent (float num, 0.0 = 0%    1 = 100%)
+TRAIN_SIZE = 0.7
+# Batch_size (should be around 32)
+BATCH_SIZE = 1
+# Save the model?
+SAVE_MODEL = True
+# Plot the history of the model-fitting
+PLOT_HIST = True
 
-IMG_SIZE_PX = 32  #original 512
-SLICE_COUNT = 32  #number of slices per patient
-NUM_PATIENTS = 20 #number of patients
-BATCH_SIZE = 1    #batch_size
-TRAIN_SIZE = 0.7  #training percent (float num)
-
-# Pre processing options:
+""" Pre processing options: """
+# Want to pre process?
+PREPROCESS = True    
+# Segment Lungs (data)?
 SEGMENT = True
+# Normalize data?
 NORMALIZE = True
+# Zero center data?
 ZERO_CENT = True
 
 ################################
 ### Pre processing functions ###
 ################################
+
 """ Chunks """
 def chunks(l, n):
     for i in range(0, len(l), n):
@@ -62,14 +75,12 @@ def get_pixels_hu(slices):
     # Convert to int16 (from sometimes int16),
     # should be possible as values should always be low enough (<32k)
     image = image.astype(np.int16)
-
     # Set outside-of-scan pixels to 0
     # The intercept is usually -1024, so air is approximately 0
     image[image == -2000] = 0
 
     # Convert to Hounsfield units (HU)
     for slice_number in range(len(slices)):
-
         intercept = slices[slice_number].RescaleIntercept
         slope = slices[slice_number].RescaleSlope
 
@@ -84,7 +95,6 @@ def get_pixels_hu(slices):
 """  """
 def largest_label_volume(im, bg=-1):
     vals, counts = np.unique(im, return_counts=True)
-
     counts = counts[vals != bg]
     vals = vals[vals != bg]
 
@@ -99,16 +109,13 @@ def segment_lung_mask(image, fill_lung_structures=True):
     # 0 is treated as background, which we do not want
     binary_image = np.array(image > -320, dtype=np.int8) + 1
     labels = measure.label(binary_image)
-
     # Pick the pixel in the very corner to determine which label is air.
     #   Improvement: Pick multiple background labels from around the patient
     #   More resistant to "trays" on which the patient lays cutting the air
     #   around the person in half
     background_label = labels[0, 0, 0]
-
     # Fill the air around the person
     binary_image[background_label == labels] = 2
-
     # Method of filling the lung structures
     if fill_lung_structures:
         # For every slice we determine the largest solid structure
@@ -122,7 +129,6 @@ def segment_lung_mask(image, fill_lung_structures=True):
 
     binary_image -= 1  # Make the image actual binary
     binary_image = 1 - binary_image  # Invert it, lungs are now 1
-
     # Remove other air pockets insided body
     labels = measure.label(binary_image, background=0)
     l_max = largest_label_volume(labels, bg=0)
@@ -135,13 +141,11 @@ def segment_lung_mask(image, fill_lung_structures=True):
 def resample(image, scan, new_spacing=[1, 1, 1]):
     # Determine current pixel spacing
     spacing = np.array([scan[0].SliceThickness] + scan[0].PixelSpacing, dtype=np.float32)
-
     resize_factor = spacing / new_spacing
     new_real_shape = image.shape * resize_factor
     new_shape = np.round(new_real_shape)
     real_resize_factor = new_shape / image.shape
     new_spacing = spacing / real_resize_factor
-
     image = scipy.ndimage.interpolation.zoom(image, real_resize_factor, mode='nearest')
 
     return image, new_spacing
@@ -174,20 +178,10 @@ def load_scan(path):
         s.SliceThickness = slice_thickness
 
     return slices
-
-""" batch generator for .fit_generator that yield random data from 'features' and 'labels' of size 'batch_size' """
-def batch_generator(features, labels, batch_size):
-    # Create empty arrays to contain batch of features and labels#
-    batch_features = np.zeros((batch_size, IMG_SIZE_PX, IMG_SIZE_PX, SLICE_COUNT, 1))
-    batch_labels = np.zeros((batch_size, 2))
-    while True:
-        for i in range(batch_size):
-            # choose random index in features
-            index = random.choice(len(features),1)
-            batch_features[i] = features[index]
-            batch_labels[i] = labels[index]
-            yield (batch_features, batch_labels)
-
+    
+#############################
+### Create newtwork model ###
+#############################
 def create_network(input_shape):
     model = keras.models.Sequential()
     # Block 01
@@ -217,79 +211,80 @@ def create_network(input_shape):
 
     return model
  
-#######################
-### Pre Processing ####
-#######################
+###########################
+### Pre Processing data ###
+###########################
 """ Loads and preprocess labels and patient data """
-def preprocessing(train_size, labels, patients, segment_data=False, normalize_data=False, zero_cent_data=False):
-    patientNames = []
+def preprocessing(pre_process=True, train_size=0.7, labels, patients, segment_data=False, normalize_data=False, resample_data=False):
     dictionaryA = {}
     dictionaryB = {}
-    i = 0
-    
-    for num,patient in enumerate(patients):
-        #print(patient)
-        if i == NUM_PATIENTS:
-            break
-    #    if num % 100 == 0:
-    #        print(num)
-        try:
-            first_patient = load_scan(DATA_DIR + patient)
-            first_patient_pixels = get_pixels_hu(first_patient)
-            pix_resampled, spacing = resample(first_patient_pixels, first_patient, [1, 1, 1])
-            if(segment_data):
-                pix_resampled = segment_lung_mask(pix_resampled, False)
-            if(normalize_data):
-                pix_resampled = normalize(pix_resampled)
-            if(zero_cent_data):
-                pix_resampled = zero_center(pix_resampled)
-            label = labels.get_value(patient, 'cancer')
-            slices = [cv2.resize(np.array(each_slice), (IMG_SIZE_PX, IMG_SIZE_PX)) for each_slice in pix_resampled]
-            new_slices = []
-            chunk_sizes = math.ceil(len(slices) / SLICE_COUNT)
-
-            for slice_chunk in chunks(slices, chunk_sizes):
-                slice_chunk = list(map(mean, zip(*slice_chunk)))
-                new_slices.append(slice_chunk)
-            if len(new_slices) == SLICE_COUNT - 1:
-                new_slices.append(new_slices[-1])
-            if len(new_slices) == SLICE_COUNT - 2:
-                new_slices.append(new_slices[-1])
-                new_slices.append(new_slices[-1])
-            if len(new_slices) == SLICE_COUNT + 2:
-                new_val = list(map(mean, zip(*[new_slices[SLICE_COUNT - 1], new_slices[SLICE_COUNT], ])))
-                del new_slices[SLICE_COUNT]
-                new_slices[SLICE_COUNT - 1] = new_val
-            if len(new_slices) == SLICE_COUNT + 1:
-                new_val = list(map(mean, zip(*[new_slices[SLICE_COUNT - 1], new_slices[SLICE_COUNT], ])))
-                del new_slices[SLICE_COUNT]
-                new_slices[SLICE_COUNT - 1] = new_val
-
-            pix_resampled = np.array(new_slices)
-            i += 1
-            print(i)
-            dictionaryB[str(patient)] = label
-            np.save(OUTPUT_DIR + str(patient), pix_resampled)
-            patientNames.append(str(patient))
-
-        except KeyError as e:
-            print('This is unlabeled data!')
-    
     train_count = round(train_size * NUM_PATIENTS)
-    np.random.shuffle(patientNames)                    
-    dictionaryA['train'] = patientNames[:train_count]
-    dictionaryA['validation'] = patientNames[train_count:]
-        
-    w = csv.writer(open(OUTPUT_DIR + 'partitionDict.csv', 'w'))
-    for key, val in dictionaryA.items():
-        w.writerow([key, val])
-        
-    u = csv.writer(open(OUTPUT_DIR + 'labelsDict.csv', 'w'))
-    for key, val in dictionaryB.items():
-        u.writerow([key, val])
-            
+
+    if PREPROCESS:
+        patientNames = []
+        print('Pre Processing data..\n')
+        i = 0
+        for num, patient in enumerate(patients):
+            print(patient)
+            if i == NUM_PATIENTS:
+                break
+            try:
+                label = labels.get_value(patient, 'cancer')
+                first_patient = load_scan(DATA_DIR + patient)
+                first_patient_pixels = get_pixels_hu(first_patient)
+                pix_resampled, spacing = resample(first_patient_pixels, first_patient, [1, 1, 1])
+                if (segment_data):
+                    pix_resampled = segment_lung_mask(pix_resampled, False)
+                if (normalize_data):
+                    pix_resampled = normalize(pix_resampled)
+                if (resample_data):
+                    pix_resampled = zero_center(pix_resampled)
+
+                slices = [cv2.resize(np.array(each_slice), (IMG_SIZE_PX, IMG_SIZE_PX)) for each_slice in pix_resampled]
+                new_slices = []
+                chunk_sizes = math.ceil(len(slices) / SLICE_COUNT)
+
+                for slice_chunk in chunks(slices, chunk_sizes):
+                    slice_chunk = list(map(mean, zip(*slice_chunk)))
+                    new_slices.append(slice_chunk)
+                if len(new_slices) == SLICE_COUNT - 1:
+                    new_slices.append(new_slices[-1])
+                if len(new_slices) == SLICE_COUNT - 2:
+                    new_slices.append(new_slices[-1])
+                    new_slices.append(new_slices[-1])
+                if len(new_slices) == SLICE_COUNT + 2:
+                    new_val = list(map(mean, zip(*[new_slices[SLICE_COUNT - 1], new_slices[SLICE_COUNT], ])))
+                    del new_slices[SLICE_COUNT]
+                    new_slices[SLICE_COUNT - 1] = new_val
+                if len(new_slices) == SLICE_COUNT + 1:
+                    new_val = list(map(mean, zip(*[new_slices[SLICE_COUNT - 1], new_slices[SLICE_COUNT], ])))
+                    del new_slices[SLICE_COUNT]
+                    new_slices[SLICE_COUNT - 1] = new_val
+                if(len(new_slices) != SLICE_COUNT):
+                    continue
+
+                pix_resampled = np.array(new_slices)
+                np.save(OUTPUT_DIR + str(patient), pix_resampled)
+                i += 1
+                print(i)
+                dictionaryB[str(patient)] = label
+                patientNames.append(str(patient))
+            except KeyError as e:
+                print('This is unlabeled data!')
+
+        random.shuffle(patientNames)
+        dictionaryA['train'] = patientNames[:train_count]
+        dictionaryA['validation'] = patientNames[train_count:]
+        np.save(OUTPUT_DIR + 'partitionDict', dictionaryA)
+        np.save(OUTPUT_DIR + 'labelsDict', dictionaryB)
+    else:
+        dictionaryA = np.load(OUTPUT_DIR + 'partitionDict.npy').item()
+        dictionaryB = np.load(OUTPUT_DIR + 'labelsDict.npy').item()
+        print(dictionaryA)
+        print(dictionaryB)
+
     return dictionaryA, dictionaryB
-    
+
 ######################
 ### data Generator ###
 ######################
@@ -310,13 +305,11 @@ class DataGenerator(object):
       while 1:
           # Generate order of exploration of dataset
           indexes = self.__get_exploration_order(list_IDs)
-
           # Generate batches
           imax = int(len(indexes)/self.batch_size)
           for i in range(imax):
               # Find list of IDs
               list_IDs_temp = [list_IDs[k] for k in indexes[i*self.batch_size:(i+1)*self.batch_size]]
-
               # Generate data
               X, y = self.__data_generation(labels, list_IDs_temp)
 
@@ -336,12 +329,10 @@ class DataGenerator(object):
       # Initialization
       X = np.empty((self.batch_size, self.dim_x, self.dim_y, self.dim_z, 1))
       y = np.empty((self.batch_size), dtype = int)
-
       # Generate data
       for i, ID in enumerate(list_IDs_temp):
           # Store volume
           X[i, :, :, :, 0] = np.load(OUTPUT_DIR + ID + '.npy')
-
           # Store class
           y[i] = labels[ID]
 
@@ -357,8 +348,20 @@ def sparsify(y):
 ### Convolutional Neural Network ###
 ####################################
 
+# Dir of patients
+pats = os.listdir(DATA_DIR)
+
+# Some Pyplot stuff..
+plt.rcParams['backend'] = "Qt4Agg"
+
 # Pre process data
-partition, labels = preprocessing(TRAIN_SIZE, labs, pats, segment_data=SEGMENT, normalize_data=NORMALIZE, zero_cent_data=ZERO_CENT)
+partition, labels = preprocessing(pre_process=PREPROCESS,
+                                train_size=TRAIN_SIZE,
+                                labs,
+                                pats,
+                                segment_data=SEGMENT,
+                                normalize_data=NORMALIZE,
+                                zero_cent_data=ZERO_CENT)
 
 params = {'dim_x': IMG_SIZE_PX,
           'dim_y': IMG_SIZE_PX,
@@ -366,7 +369,7 @@ params = {'dim_x': IMG_SIZE_PX,
           'batch_size': BATCH_SIZE,
           'shuffle': True}
 
-# Create generators
+# Create data generators
 training_generator = DataGenerator(**params).generate(labels, partition['train'])
 validation_generator = DataGenerator(**params).generate(labels, partition['validation'])
 
@@ -380,21 +383,41 @@ model.compile(loss='categorical_crossentropy', optimizer=opt, metrics=['accuracy
 print('Done Compiling\n')
 
 # Fit network
-model.fit_generator(generator = training_generator,
-                    steps_per_epoch=len(partition['train'])//BATCH_SIZE,
+hist = model.fit_generator(generator = training_generator,
+                    steps_per_epoch=len(partition['train'])/1,
+                    epochs=12,
                     validation_data=validation_generator,
-                    validation_steps=len(partition['validation'])//BATCH_SIZE)
+                    validation_steps=len(partition['validation'])/1
+                    )
 print('done fitting\n')
 
 # Save the model with a uniqe name
-strName = str(uuid.uuid4())
-if(SEGMENT):
-    strName += "_seg"
-if(NORMALIZE):
-    strName += "_norm"
-if(ZERO_CENT):
-    strName += "_zeroc"
+if(SAVE_MODEL):
+    strName = str(uuid.uuid4())
+    if(SEGMENT):
+        strName += "_seg"
+    if(NORMALIZE):
+        strName += "_norm"
+    if(ZERO_CENT):
+        strName += "_zeroc"
+    model.save(OUTPUT_DIR + strName + '.h5')
+    print('model saved\n')
 
-print(strName)
-model.save(OUTPUT_DIR + strName + '.h5')
-print('model saved\n)
+# summarize history for accuracy
+if(PLOT_HIST):
+    plt.plot(hist.history['acc'])
+    plt.plot(hist.history['val_acc'])
+    plt.title('Model Accuracy')
+    plt.ylabel('accuracy')
+    plt.xlabel('epoch')
+    plt.legend(['train', 'test'], loc='upper left')
+    plt.show()
+
+    # summarize history for loss
+    plt.plot(hist.history['loss'])
+    plt.plot(hist.history['val_loss'])
+    plt.title('model loss')
+    plt.ylabel('loss')
+    plt.xlabel('epoch')
+    plt.legend(['train', 'test'], loc='upper left')
+    plt.show()

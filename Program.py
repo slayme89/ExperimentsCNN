@@ -215,7 +215,7 @@ def create_network(input_shape):
 ### Pre Processing data ###
 ###########################
 """ Loads and preprocess labels and patient data """
-def preprocessing(pre_process=True, train_size=0.7, labels, patients, segment_data=False, normalize_data=False, resample_data=False):
+def preprocessing(labels, patients, pre_process=True, train_size=0.7, segment_data=False, normalize_data=False, zero_cent_data=False):
     dictionaryA = {}
     dictionaryB = {}
     train_count = round(train_size * NUM_PATIENTS)
@@ -225,7 +225,6 @@ def preprocessing(pre_process=True, train_size=0.7, labels, patients, segment_da
         print('Pre Processing data..\n')
         i = 0
         for num, patient in enumerate(patients):
-            print(patient)
             if i == NUM_PATIENTS:
                 break
             try:
@@ -237,7 +236,7 @@ def preprocessing(pre_process=True, train_size=0.7, labels, patients, segment_da
                     pix_resampled = segment_lung_mask(pix_resampled, False)
                 if (normalize_data):
                     pix_resampled = normalize(pix_resampled)
-                if (resample_data):
+                if (zero_cent_data):
                     pix_resampled = zero_center(pix_resampled)
 
                 slices = [cv2.resize(np.array(each_slice), (IMG_SIZE_PX, IMG_SIZE_PX)) for each_slice in pix_resampled]
@@ -355,10 +354,10 @@ pats = os.listdir(DATA_DIR)
 plt.rcParams['backend'] = "Qt4Agg"
 
 # Pre process data
-partition, labels = preprocessing(pre_process=PREPROCESS,
-                                train_size=TRAIN_SIZE,
-                                labs,
+partition, labels = preprocessing(labs,
                                 pats,
+                                pre_process=PREPROCESS,
+                                train_size=TRAIN_SIZE,
                                 segment_data=SEGMENT,
                                 normalize_data=NORMALIZE,
                                 zero_cent_data=ZERO_CENT)
@@ -392,8 +391,8 @@ hist = model.fit_generator(generator = training_generator,
 print('done fitting\n')
 
 # Save the model with a uniqe name
+strName = str(uuid.uuid4())
 if(SAVE_MODEL):
-    strName = str(uuid.uuid4())
     if(SEGMENT):
         strName += "_seg"
     if(NORMALIZE):
@@ -407,7 +406,7 @@ if(SAVE_MODEL):
 if(PLOT_HIST):
     plt.plot(hist.history['acc'])
     plt.plot(hist.history['val_acc'])
-    plt.title('Model Accuracy')
+    plt.title(strName + ' : Model Accuracy')
     plt.ylabel('accuracy')
     plt.xlabel('epoch')
     plt.legend(['train', 'test'], loc='upper left')
@@ -416,7 +415,7 @@ if(PLOT_HIST):
     # summarize history for loss
     plt.plot(hist.history['loss'])
     plt.plot(hist.history['val_loss'])
-    plt.title('model loss')
+    plt.title(strName + ' : Model Loss')
     plt.ylabel('loss')
     plt.xlabel('epoch')
     plt.legend(['train', 'test'], loc='upper left')

@@ -35,10 +35,12 @@ OUTPUT_DIR = 'D:/Data/pre/'
 IMG_SIZE_PX = 32
 # Number of slices per patient
 SLICE_COUNT = 32
+# Formatted data dir to include details about the resolution of the data
+FORMATTED_DATA_DIR = OUTPUT_DIR + '-{}-{}-{}'.format(IMG_SIZE_PX, IMG_SIZE_PX, SLICE_COUNT)
 # Number of patients (Amounth of data in total)
 NUM_PATIENTS = 20
 # Training percent (float num, 0.0 = 0%    1 = 100%)
-TRAIN_SIZE = 0.7
+TRAIN_SIZE = 0.8
 # Batch_size (should be around 32)
 BATCH_SIZE = 1
 # Save the model?
@@ -47,8 +49,8 @@ SAVE_MODEL = True
 PLOT_HIST = True
 
 """ Pre processing options: """
-# Want to pre process?
-PREPROCESS = True    
+# Want to pre process? (if false the program will try to load already pre processed data)
+PREPROCESS = True
 # Segment Lungs (data)?
 SEGMENT = True
 # Normalize data?
@@ -61,13 +63,19 @@ ZERO_CENT = True
 ################################
 
 """ Chunks """
-def chunks(l, n):
+#n-sized chunks from list l
+def chunks( l,n ):
+    count=0
     for i in range(0, len(l), n):
-        yield l[i:i + n]
+        if(count < SLICE_COUNT):
+            yield l[i:i + n]
+            count=count+1
 
-""" Gets the mean value from 'a' """
+
+""" Gets the mean value """
 def mean(a):
     return sum(a) / len(a)
+
 
 """ Extracts a image from a DICOM-files in form of a pixel array """
 def get_pixels_hu(slices):
@@ -92,6 +100,7 @@ def get_pixels_hu(slices):
 
     return np.array(image, dtype=np.int16)
 
+
 """  """
 def largest_label_volume(im, bg=-1):
     vals, counts = np.unique(im, return_counts=True)
@@ -102,6 +111,7 @@ def largest_label_volume(im, bg=-1):
         return vals[np.argmax(counts)]
     else:
         return None
+
 
 """ Crops out the lungs from a image """
 def segment_lung_mask(image, fill_lung_structures=True):
@@ -137,6 +147,7 @@ def segment_lung_mask(image, fill_lung_structures=True):
 
     return binary_image
 
+
 """ Resampling data """
 def resample(image, scan, new_spacing=[1, 1, 1]):
     # Determine current pixel spacing
@@ -150,6 +161,7 @@ def resample(image, scan, new_spacing=[1, 1, 1]):
 
     return image, new_spacing
 
+
 """ Normalization of a image """
 def normalize(image):
     MIN_BOUND = -1000.0
@@ -159,11 +171,13 @@ def normalize(image):
     image[image < 0] = 0.
     return image
 
+
 """ Zero centering a image """
 def zero_center(image):
     PIXEL_MEAN = 0.25
     image = image - PIXEL_MEAN
     return image
+
 
 """ Loads a DT-scan from 1 patient (DICOM-file) """
 def load_scan(path):
@@ -178,39 +192,40 @@ def load_scan(path):
         s.SliceThickness = slice_thickness
 
     return slices
-    
+
+
 #############################
 ### Create newtwork model ###
 #############################
 def create_network(input_shape):
     model = keras.models.Sequential()
     # Block 01
-    model.add(AveragePooling3D(input_shape=input_shape,pool_size=(2,1,1), strides=(2,1,1), padding='same', name='AvgPool1'))
-    model.add(Conv3D(64, kernel_size=(3,3,3), strides=(1,1,1), activation='relu', padding='same', name='Conv1'))
-    model.add(MaxPooling3D(pool_size=(1,2,2), strides=(1,2,2), padding='valid', name='MaxPool1'))
+    model.add(AveragePooling3D(input_shape=input_shape, pool_size=(2, 1, 1), strides=(2, 1, 1), padding='same', name='AvgPool1'))
+    model.add(Conv3D(64, kernel_size=(3, 3, 3), strides=(1, 1, 1), activation='relu', padding='same', name='Conv1'))
+    model.add(MaxPooling3D(pool_size=(1, 2, 2), strides=(1, 2, 2), padding='valid', name='MaxPool1'))
     # Block 02
-    model.add(Conv3D(128, kernel_size=(3,3,3), strides=(1,1,1), activation='relu', padding='same', name='Conv2'))
-    model.add(MaxPooling3D(pool_size=(2,2,2), strides=(2,2,2), padding='valid', name='MaxPool2'))
+    model.add(Conv3D(128, kernel_size=(3, 3, 3), strides=(1, 1, 1), activation='relu', padding='same', name='Conv2'))
+    model.add(MaxPooling3D(pool_size=(2, 2, 2), strides=(2, 2, 2), padding='valid', name='MaxPool2'))
     model.add(Dropout(rate=0.3))
     # Block 03
-    model.add(Conv3D(256, kernel_size=(3,3,3), strides=(1,1,1), activation='relu', padding='same', name='Conv3A'))
-    model.add(Conv3D(256, kernel_size=(3,3,3), strides=(1,1,1), activation='relu', padding='same', name='Conv3B'))
-    model.add(MaxPooling3D(pool_size=(2,2,2), strides=(2,2,2), padding='valid', name='MaxPool3'))
+    model.add(Conv3D(256, kernel_size=(3, 3, 3), strides=(1, 1, 1), activation='relu', padding='same', name='Conv3A'))
+    model.add(Conv3D(256, kernel_size=(3, 3, 3), strides=(1, 1, 1), activation='relu', padding='same', name='Conv3B'))
+    model.add(MaxPooling3D(pool_size=(2, 2, 2), strides=(2, 2, 2), padding='valid', name='MaxPool3'))
     model.add(Dropout(rate=0.4))
     # Block 04
-    model.add(Conv3D(512, kernel_size=(3,3,3), strides=(1,1,1), activation='relu', padding='same', name='Conv4A'))
-    model.add(Conv3D(512, kernel_size=(3,3,3), strides=(1,1,1), activation='relu', padding='same', name='Conv4B'))
-    model.add(MaxPooling3D(pool_size=(2,2,2), strides=(2,2,2), padding='valid', name='MaxPool4'))
+    model.add(Conv3D(512, kernel_size=(3, 3, 3), strides=(1, 1, 1), activation='relu', padding='same', name='Conv4A'))
+    model.add(Conv3D(512, kernel_size=(3, 3, 3), strides=(1, 1, 1), activation='relu', padding='same', name='Conv4B'))
+    model.add(MaxPooling3D(pool_size=(2, 2, 2), strides=(2, 2, 2), padding='valid', name='MaxPool4'))
     model.add(Dropout(rate=0.5))
-    # Block 05 
-    model.add(Conv3D(256, kernel_size=(3,3,3), strides=(1, 1, 1), activation='relu', padding='same', name='Conv5'))
+    # Block 05
+    model.add(Conv3D(256, kernel_size=(3, 3, 3), strides=(1, 1, 1), activation='relu', padding='same', name='Conv5'))
     model.add(Flatten())
     model.add(Dense(128, activation='relu'))
     model.add(Dropout(0.6))
     model.add(Dense(2, activation='softmax'))
 
     return model
- 
+
 ###########################
 ### Pre Processing data ###
 ###########################
@@ -222,8 +237,10 @@ def preprocessing(labels, patients, pre_process=True, train_size=0.7, segment_da
 
     if PREPROCESS:
         patientNames = []
-        print('Pre Processing data..\n')
+        print('Pre Processing data')
         i = 0
+        print('{} / {}'.format(i, NUM_PATIENTS))
+        
         for num, patient in enumerate(patients):
             if i == NUM_PATIENTS:
                 break
@@ -241,107 +258,102 @@ def preprocessing(labels, patients, pre_process=True, train_size=0.7, segment_da
 
                 slices = [cv2.resize(np.array(each_slice), (IMG_SIZE_PX, IMG_SIZE_PX)) for each_slice in pix_resampled]
                 new_slices = []
-                chunk_sizes = math.ceil(len(slices) / SLICE_COUNT)
+                chunk_sizes = math.floor(len(slices) / SLICE_COUNT)
 
                 for slice_chunk in chunks(slices, chunk_sizes):
                     slice_chunk = list(map(mean, zip(*slice_chunk)))
                     new_slices.append(slice_chunk)
-                if len(new_slices) == SLICE_COUNT - 1:
-                    new_slices.append(new_slices[-1])
-                if len(new_slices) == SLICE_COUNT - 2:
-                    new_slices.append(new_slices[-1])
-                    new_slices.append(new_slices[-1])
-                if len(new_slices) == SLICE_COUNT + 2:
-                    new_val = list(map(mean, zip(*[new_slices[SLICE_COUNT - 1], new_slices[SLICE_COUNT], ])))
-                    del new_slices[SLICE_COUNT]
-                    new_slices[SLICE_COUNT - 1] = new_val
-                if len(new_slices) == SLICE_COUNT + 1:
-                    new_val = list(map(mean, zip(*[new_slices[SLICE_COUNT - 1], new_slices[SLICE_COUNT], ])))
-                    del new_slices[SLICE_COUNT]
-                    new_slices[SLICE_COUNT - 1] = new_val
-                if(len(new_slices) != SLICE_COUNT):
+                if (len(new_slices) != SLICE_COUNT):
                     continue
 
                 pix_resampled = np.array(new_slices)
-                np.save(OUTPUT_DIR + str(patient), pix_resampled)
-                i += 1
-                print(i)
+                np.save(FORMATTED_DATA_DIR + str(patient), pix_resampled)
                 dictionaryB[str(patient)] = label
                 patientNames.append(str(patient))
+                i += 1
+                print('{} / {}'.format(i, NUM_PATIENTS))
             except KeyError as e:
                 print('This is unlabeled data!')
 
         random.shuffle(patientNames)
         dictionaryA['train'] = patientNames[:train_count]
         dictionaryA['validation'] = patientNames[train_count:]
-        np.save(OUTPUT_DIR + 'partitionDict', dictionaryA)
-        np.save(OUTPUT_DIR + 'labelsDict', dictionaryB)
+        np.save(FORMATTED_DATA_DIR + 'partitionDict', dictionaryA)
+        np.save(FORMATTED_DATA_DIR + 'labelsDict', dictionaryB)
     else:
-        dictionaryA = np.load(OUTPUT_DIR + 'partitionDict.npy').item()
-        dictionaryB = np.load(OUTPUT_DIR + 'labelsDict.npy').item()
-        print(dictionaryA)
-        print(dictionaryB)
+        dictionaryA = np.load(FORMATTED_DATA_DIR + 'partitionDict.npy').item()
+        dictionaryB = np.load(FORMATTED_DATA_DIR + 'labelsDict.npy').item()
+        #print('Loaded:')
+        #print(dictionaryA)
+        #print(dictionaryB)
 
     return dictionaryA, dictionaryB
+
 
 ######################
 ### data Generator ###
 ######################
 """ Generates data for the .fit_generator()"""
 class DataGenerator(object):
-  'Generates data for Keras'
-  def __init__(self, dim_x = 32, dim_y = 32, dim_z = 32, batch_size = 32, shuffle = True):
-      'Initialization'
-      self.dim_x = dim_x
-      self.dim_y = dim_y
-      self.dim_z = dim_z
-      self.batch_size = batch_size
-      self.shuffle = shuffle
+    'Generates data for Keras'
 
-  def generate(self, labels, list_IDs):
-      'Generates batches of samples'
-      # Infinite loop
-      while 1:
-          # Generate order of exploration of dataset
-          indexes = self.__get_exploration_order(list_IDs)
-          # Generate batches
-          imax = int(len(indexes)/self.batch_size)
-          for i in range(imax):
-              # Find list of IDs
-              list_IDs_temp = [list_IDs[k] for k in indexes[i*self.batch_size:(i+1)*self.batch_size]]
-              # Generate data
-              X, y = self.__data_generation(labels, list_IDs_temp)
+    def __init__(self, dim_x=32, dim_y=32, dim_z=32, batch_size=32, shuffle=True):
+        'Initialization'
+        self.dim_x = dim_x
+        self.dim_y = dim_y
+        self.dim_z = dim_z
+        self.batch_size = batch_size
+        self.shuffle = shuffle
 
-              yield X, y
 
-  def __get_exploration_order(self, list_IDs):
-      'Generates order of exploration'
-      # Find exploration order
-      indexes = np.arange(len(list_IDs))
-      if self.shuffle == True:
-          np.random.shuffle(indexes)
+    def generate(self, labels, list_IDs):
+        'Generates batches of samples'
+        # Infinite loop
+        while 1:
+            # Generate order of exploration of dataset
+            indexes = self.__get_exploration_order(list_IDs)
+            # Generate batches
+            imax = int(len(indexes) / self.batch_size)
+            for i in range(imax):
+                # Find list of IDs
+                list_IDs_temp = [list_IDs[k] for k in indexes[i * self.batch_size:(i + 1) * self.batch_size]]
+                # Generate data
+                X, y = self.__data_generation(labels, list_IDs_temp)
 
-      return indexes
+                yield X, y
 
-  def __data_generation(self, labels, list_IDs_temp):
-      'Generates data of batch_size samples' # X : (n_samples, v_size, v_size, v_size, n_channels)
-      # Initialization
-      X = np.empty((self.batch_size, self.dim_x, self.dim_y, self.dim_z, 1))
-      y = np.empty((self.batch_size), dtype = int)
-      # Generate data
-      for i, ID in enumerate(list_IDs_temp):
-          # Store volume
-          X[i, :, :, :, 0] = np.load(OUTPUT_DIR + ID + '.npy')
-          # Store class
-          y[i] = labels[ID]
 
-      return X, sparsify(y)
+    def __get_exploration_order(self, list_IDs):
+        'Generates order of exploration'
+        # Find exploration order
+        indexes = np.arange(len(list_IDs))
+        if self.shuffle == True:
+            np.random.shuffle(indexes)
+
+        return indexes
+
+
+    def __data_generation(self, labels, list_IDs_temp):
+        'Generates data of batch_size samples'  # X : (n_samples, v_size, v_size, v_size, n_channels)
+        # Initialization
+        X = np.empty((self.batch_size, self.dim_x, self.dim_y, self.dim_z, 1))
+        y = np.empty((self.batch_size), dtype=int)
+        # Generate data
+        for i, ID in enumerate(list_IDs_temp):
+            # Store volume
+            X[i, :, :, :, 0] = np.load(FORMATTED_DATA_DIR + ID + '.npy')
+            # Store class
+            y[i] = labels[ID]
+
+        return X, sparsify(y)
+
 
 def sparsify(y):
-  'Returns labels in binary NumPy array'
-  n_classes = 2
-  return np.array([[1 if y[i] == j else 0 for j in range(n_classes)]
-                   for i in range(y.shape[0])])
+    'Returns labels in binary NumPy array'
+    n_classes = 2
+    return np.array([[1 if y[i] == j else 0 for j in range(n_classes)]
+                     for i in range(y.shape[0])])
+
 
 ####################################
 ### Convolutional Neural Network ###
@@ -355,14 +367,14 @@ plt.rcParams['backend'] = "Qt4Agg"
 
 # Pre process data
 partition, labels = preprocessing(labs,
-                                pats,
-                                pre_process=PREPROCESS,
-                                train_size=TRAIN_SIZE,
-                                segment_data=SEGMENT,
-                                normalize_data=NORMALIZE,
-                                zero_cent_data=ZERO_CENT)
+                                  pats,
+                                  pre_process=PREPROCESS,
+                                  train_size=TRAIN_SIZE,
+                                  segment_data=SEGMENT,
+                                  normalize_data=NORMALIZE,
+                                  zero_cent_data=ZERO_CENT)
 
-params = {'dim_x': IMG_SIZE_PX,
+params = {'dim_x': SLICE_COUNT,
           'dim_y': IMG_SIZE_PX,
           'dim_z': IMG_SIZE_PX,
           'batch_size': BATCH_SIZE,
@@ -373,7 +385,7 @@ training_generator = DataGenerator(**params).generate(labels, partition['train']
 validation_generator = DataGenerator(**params).generate(labels, partition['validation'])
 
 # Build the network model (3D CNN)
-model = create_network((IMG_SIZE_PX, IMG_SIZE_PX, SLICE_COUNT, 1))
+model = create_network((SLICE_COUNT, IMG_SIZE_PX, IMG_SIZE_PX, 1))
 print('Done Building\n')
 
 # Compile the model
@@ -382,28 +394,28 @@ model.compile(loss='categorical_crossentropy', optimizer=opt, metrics=['accuracy
 print('Done Compiling\n')
 
 # Fit network
-hist = model.fit_generator(generator = training_generator,
-                    steps_per_epoch=len(partition['train'])/1,
-                    epochs=12,
-                    validation_data=validation_generator,
-                    validation_steps=len(partition['validation'])/1
-                    )
+hist = model.fit_generator(generator=training_generator,
+                           steps_per_epoch=len(partition['train']) / 1,
+                           epochs=12,
+                           validation_data=validation_generator,
+                           validation_steps=len(partition['validation']) / 1
+                           )
 print('done fitting\n')
 
 # Save the model with a uniqe name
 strName = str(uuid.uuid4())
-if(SAVE_MODEL):
-    if(SEGMENT):
+if (SAVE_MODEL):
+    if (SEGMENT):
         strName += "_seg"
-    if(NORMALIZE):
+    if (NORMALIZE):
         strName += "_norm"
-    if(ZERO_CENT):
+    if (ZERO_CENT):
         strName += "_zeroc"
     model.save(OUTPUT_DIR + strName + '.h5')
     print('model saved\n')
 
 # summarize history for accuracy
-if(PLOT_HIST):
+if (PLOT_HIST):
     plt.plot(hist.history['acc'])
     plt.plot(hist.history['val_acc'])
     plt.title(strName + ' : Model Accuracy')
@@ -419,4 +431,4 @@ if(PLOT_HIST):
     plt.ylabel('loss')
     plt.xlabel('epoch')
     plt.legend(['train', 'test'], loc='upper left')
-    plt.show()
+plt.show()

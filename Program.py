@@ -17,6 +17,7 @@ from keras.callbacks import History
 from keras.optimizers import SGD
 from keras.models import load_model, Sequential, Model
 from keras.layers import Conv3D, MaxPooling3D, Flatten, Dense, Dropout, AveragePooling3D
+from multiprocessing import Pool
 
 ################
 ### Options: ###
@@ -57,6 +58,10 @@ SEGMENT = True
 NORMALIZE = True
 # Zero center data?
 ZERO_CENT = True
+
+
+""" Number of threads in pool (for preprocessing)"""
+POOL_SIZE = 2
 
 ################################
 ### Pre processing functions ###
@@ -230,12 +235,13 @@ def create_network(input_shape):
 ### Pre Processing data ###
 ###########################
 """ Loads and preprocess labels and patient data """
-def preprocessing(labels, patients, pre_process=True, train_size=0.7, segment_data=False, normalize_data=False, zero_cent_data=False):
+def preprocessing(labels, patients, pre_process=True, train_size=0.7, segment_data=False, normalize_data=False, zero_cent_data=False, pool_size=POOL_SIZE):
     dictionaryA = {}
     dictionaryB = {}
     train_count = round(train_size * NUM_PATIENTS)
 
     if PREPROCESS:
+        
         patientNames = []
         print('Pre Processing data')
         i = 0
@@ -244,6 +250,13 @@ def preprocessing(labels, patients, pre_process=True, train_size=0.7, segment_da
         for num, patient in enumerate(patients):
             if i == NUM_PATIENTS:
                 break
+            skip_patient = False
+            for preprocessed_patient in os.listdir(OUTPUT_DIR):
+                if str(preprocessed_patient)[:-4] == '-{}-{}-{}'.format(IMG_SIZE_PX, IMG_SIZE_PX, SLICE_COUNT) + str(patient):
+                    skip_patient = True
+                    break
+            if skip_patient:
+                continue
             try:
                 label = labels.get_value(patient, 'cancer')
                 first_patient = load_scan(DATA_DIR + patient)
@@ -289,10 +302,44 @@ def preprocessing(labels, patients, pre_process=True, train_size=0.7, segment_da
 
     return dictionaryA, dictionaryB
 
+######### NEW PREPROCESS ##########
+
+""" New preprocessing func """
+def new_preprocess(patient):
+    try:
+        label = labs.get_value(patient, 'cancer')
+        first_patient = load_scan(DATA_DIR + patient)
+        first_patient_pixels = get_pixels_hu(first_patient)
+        pix_resampled, spacing = resample(first_patient_pixels, first_patient, [1, 1, 1])
+        if (SEGMENT):
+            pix_resampled = segment_lung_mask(pix_resampled, False)
+        if (NORMALIZE):
+            pix_resampled = normalize(pix_resampled)
+        if (ZERO_CENT):
+            pix_resampled = zero_center(pix_resampled)
+
+        slices = [cv2.resize(np.array(each_slice), (IMG_SIZE_PX, IMG_SIZE_PX)) for each_slice in pix_resampled]
+        new_slices = []
+        chunk_sizes = math.floor(len(slices) / SLICE_COUNT)
+
+        for slice_chunk in chunks(slices, chunk_sizes):
+            slice_chunk = list(map(mean, zip(*slice_chunk)))
+            new_slices.append(slice_chunk)
+        if (len(new_slices) != SLICE_COUNT):
+            return 'Error'
+
+        pix_resampled = np.array(new_slices)
+        np.save(FORMATTED_DATA_DIR + str(patient), pix_resampled)
+        
+    except KeyError as e:
+        print('This is unlabeled data!')
+
+    return label
 
 ######################
 ### data Generator ###
 ######################
+
 """ Generates data for the .fit_generator()"""
 class DataGenerator(object):
     'Generates data for Keras'
@@ -365,6 +412,48 @@ pats = os.listdir(DATA_DIR)
 # Some Pyplot stuff..
 plt.rcParams['backend'] = "Qt4Agg"
 
+dictionaryA = {}
+dictionaryB = {}
+
+
+## NEW PREPROCESS ##
+if PREPROCESS:
+    
+    train_count = round(TRAIN_SIZE * NUM_PATIENTS)
+    patientNames = []
+    
+    pool = Pool(processes=POOL_SIZE)
+    
+    for num, pat in enumerate(patients):
+         skip_patient = False
+         for preprocessed_patient in os.listdir(OUTPUT_DIR):
+            if str(preprocessed_patient)[:-4] == '-{}-{}-{}'.format(IMG_SIZE_PX, IMG_SIZE_PX, SLICE_COUNT) + str(patient):
+                skip_patient = True
+                break
+         if skip_patient:
+            continue
+         for i in pool.imap_unordered(new_preprocess, pat):
+             if(i == 'Error'):
+                 continue
+             dictionaryB[str(pat)] = i
+         patientNames.append(str(pat))
+            
+     
+    random.shuffle(patientNames)
+    dictionaryA['train'] = patientNames[:train_count]
+    dictionaryA['validation'] = patientNames[train_count:]
+    np.save(FORMATTED_DATA_DIR + 'partitionDict', dictionaryA)
+    np.save(FORMATTED_DATA_DIR + 'labelsDict', dictionaryB)
+else:
+    dictionaryA = np.load(FORMATTED_DATA_DIR + 'partitionDict.npy').item()
+    dictionaryB = np.load(FORMATTED_DATA_DIR + 'labelsDict.npy').item()
+
+
+partition = dictionaryA
+labels = dictionaryB
+
+
+"""
 # Pre process data
 partition, labels = preprocessing(labs,
                                   pats,
@@ -373,6 +462,8 @@ partition, labels = preprocessing(labs,
                                   segment_data=SEGMENT,
                                   normalize_data=NORMALIZE,
                                   zero_cent_data=ZERO_CENT)
+                                  
+"""
 
 params = {'dim_x': SLICE_COUNT,
           'dim_y': IMG_SIZE_PX,
